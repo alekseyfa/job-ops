@@ -1,6 +1,7 @@
 import { logger } from "@infra/logger";
 import { Bot, type Context, InlineKeyboard } from "grammy";
 import { addAuthorizedChatId, isAuthorized, validateLinkCode } from "./auth";
+import { sendFullChangelog } from "./changelog-notifications";
 
 let bot: Bot | null = null;
 
@@ -78,6 +79,8 @@ export function createBot(token: string): Bot {
       await addAuthorizedChatId(ctx.chat.id);
       await ctx.reply("✅ Linked successfully! You can now use the bot.");
       await sendMainMenu(ctx);
+      // Send changelog to newly linked user so they know about recent features
+      sendFullChangelog(ctx.chat.id).catch(() => {});
     } else {
       await ctx.reply("❌ Invalid or expired code. Get a new one from Settings.");
     }
@@ -86,6 +89,11 @@ export function createBot(token: string): Bot {
   // /menu command
   botInstance.command("menu", async (ctx) => {
     await sendMainMenu(ctx);
+  });
+
+  // /changelog command — show full changelog history
+  botInstance.command("changelog", async (ctx) => {
+    await sendFullChangelog(ctx.chat.id);
   });
 
   bot = botInstance;
@@ -116,6 +124,7 @@ export async function sendMainMenu(ctx: Context): Promise<void> {
     .text("🚀 Auto Apply", "a:status")
     .text("📊 Stats", "s:stats")
     .row()
+    .text("📡 Boards", "b:menu")
     .text("⚙️ Settings", "x:menu");
 
   await ctx.reply(text, {
