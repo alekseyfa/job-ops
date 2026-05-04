@@ -263,6 +263,7 @@ export const DEMO_SOURCE_BASE_URLS: Record<JobSource, string> = {
   ashby: "https://jobs.ashbyhq.com",
   lever: "https://jobs.lever.co",
   workday: "https://myworkdayjobs.com",
+  smartrecruiters: "https://jobs.smartrecruiters.com",
   manual: "https://example.com",
 };
 

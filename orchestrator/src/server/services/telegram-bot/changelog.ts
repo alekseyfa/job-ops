@@ -37,6 +37,18 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.3.0",
+    date: "2026-05-04",
+    items: [
+      {
+        title: "📋 SmartRecruiters Support",
+        description:
+          "Track jobs from SmartRecruiters companies like Visa, IKEA, Bosch, Sanofi, and more. Enter the company slug from jobs.smartrecruiters.com.",
+        tip: 'Go to 📡 Boards → + Add → 📋 SmartRecruiters → enter slug (e.g. "Visa").',
+      },
+    ],
+  },
+  {
     version: "1.2.0",
     date: "2026-05-04",
     items: [

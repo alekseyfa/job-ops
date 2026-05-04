@@ -357,7 +357,7 @@ export const settingsRegistry = {
     kind: "typed" as const,
     schema: z.array(
       z.object({
-        provider: z.enum(["greenhouse", "ashby", "lever", "workday"]),
+        provider: z.enum(["greenhouse", "ashby", "lever", "workday", "smartrecruiters"]),
         slug: z.string().trim().min(1).max(100),
       }),
     ).max(100),

@@ -1,4 +1,4 @@
 export interface AtsBoardEntry {
-  provider: "greenhouse" | "ashby" | "lever" | "workday";
+  provider: "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters";
   slug: string;
 }

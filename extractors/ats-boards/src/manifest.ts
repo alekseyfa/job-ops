@@ -7,6 +7,7 @@ import { createRateLimitedFetch } from "job-ops-shared/utils/rate-limited-fetch"
 import { fetchAshbyJobs } from "./ashby";
 import { fetchGreenhouseJobs } from "./greenhouse";
 import { fetchLeverJobs } from "./lever";
+import { fetchSmartRecruitersJobs } from "./smartrecruiters";
 import { fetchWorkdayJobs } from "./workday";
 import type { AtsBoardEntry } from "./types";
 
@@ -18,6 +19,7 @@ const PROVIDER_FETCHERS: Record<
   ashby: fetchAshbyJobs,
   lever: fetchLeverJobs,
   workday: fetchWorkdayJobs,
+  smartrecruiters: fetchSmartRecruitersJobs,
 };
 
 function parseAtsBoardSlugs(raw: string | undefined): AtsBoardEntry[] {
@@ -41,8 +43,8 @@ function parseAtsBoardSlugs(raw: string | undefined): AtsBoardEntry[] {
 
 export const manifest: ExtractorManifest = {
   id: "ats-boards",
-  displayName: "ATS Boards (Greenhouse, Ashby, Lever, Workday)",
-  providesSources: ["greenhouse", "ashby", "lever", "workday"],
+  displayName: "ATS Boards (Greenhouse, Ashby, Lever, Workday, SmartRecruiters)",
+  providesSources: ["greenhouse", "ashby", "lever", "workday", "smartrecruiters"],
 
   async run(context) {
     const entries = parseAtsBoardSlugs(context.settings.atsBoardSlugs);

@@ -5,7 +5,7 @@ import * as settingsRepo from "../../../repositories/settings";
 import { escapeHtml } from "../formatting";
 
 interface AtsBoardEntry {
-  provider: "greenhouse" | "ashby" | "lever" | "workday";
+  provider: "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters";
   slug: string;
 }
 
@@ -14,6 +14,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   ashby: "🔷 Ashby",
   lever: "🔶 Lever",
   workday: "🏢 Workday",
+  smartrecruiters: "📋 SmartRecruiters",
 };
 
 // Shared state for text input collection
@@ -104,6 +105,8 @@ export function registerBoardHandlers(bot: Bot): void {
         .row()
         .text("🏢 Workday", "b:p:workday")
         .row()
+        .text("📋 SmartRecruiters", "b:p:smartrecruiters")
+        .row()
         .text("« Back", "b:menu");
 
       await ctx.editMessageText(
@@ -111,7 +114,8 @@ export function registerBoardHandlers(bot: Bot): void {
           "🌿 <b>Greenhouse</b> — Stripe, Anthropic, Coinbase, Figma...\n" +
           "🔷 <b>Ashby</b> — Notion, Ramp, Linear, Vercel...\n" +
           "🔶 <b>Lever</b> — Netflix, Datadog, Twitch...\n" +
-          '🏢 <b>Workday</b> — BMW, Siemens, Intel, Allianz... (auto-detect!)',
+          '🏢 <b>Workday</b> — BMW, Siemens, Intel, Allianz... (auto-detect!)\n' +
+          '📋 <b>SmartRecruiters</b> — Visa, IKEA, Bosch, Sanofi...',
         { parse_mode: "HTML", reply_markup: keyboard },
       ).catch(() => {});
     } catch {
@@ -120,7 +124,7 @@ export function registerBoardHandlers(bot: Bot): void {
   });
 
   // Provider chosen — await slug text input
-  for (const provider of ["greenhouse", "ashby", "lever"] as const) {
+  for (const provider of ["greenhouse", "ashby", "lever", "smartrecruiters"] as const) {
     bot.callbackQuery(`b:p:${provider}`, async (ctx) => {
       try {
         await ctx.answerCallbackQuery();
@@ -237,7 +241,8 @@ export function registerBoardHandlers(bot: Bot): void {
           "🌿 Greenhouse: stripe, anthropic, coinbase, figma, datadog\n" +
           "🔷 Ashby: notion, ramp, linear, vercel, supabase\n" +
           "🔶 Lever: netflix, twitch, clearbit\n" +
-          "🏢 Workday: BMW, Siemens, Intel, Allianz, Infineon",
+          "🏢 Workday: BMW, Siemens, Intel, Allianz, Infineon\n" +
+          "📋 SmartRecruiters: Visa, IKEA, Bosch, Sanofi",
         {
           parse_mode: "HTML",
           reply_markup: new InlineKeyboard().text("« Back", "b:menu"),
