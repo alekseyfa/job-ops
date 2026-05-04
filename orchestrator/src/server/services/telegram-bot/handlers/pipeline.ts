@@ -329,6 +329,9 @@ export function registerPipelineHandlers(bot: Bot): void {
       { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("⏹ Cancel", "p:cancel") },
     );
 
+    // editMessageText returns `true` for inline-mode messages; in chat mode it
+    // returns the edited Message. Bail out defensively rather than crash.
+    if (statusMsg === true) return;
     const messageId = statusMsg.message_id;
 
     runWithRequestContext({}, async () => {

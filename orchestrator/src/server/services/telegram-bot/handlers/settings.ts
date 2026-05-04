@@ -21,13 +21,22 @@ const TIMEZONES = [
   { label: "LA (PST)", tz: "America/Los_Angeles" },
 ];
 
-function formatTimeInTz(hour: number, tz: string): string {
+function formatLocalHour(hour: number): string {
+  return `${String(hour).padStart(2, "0")}:00`;
+}
+
+function formatInstantInTz(iso: string, tz: string): string {
   try {
-    const d = new Date();
-    d.setUTCHours(hour, 0, 0, 0);
-    return d.toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" });
+    const d = new Date(iso);
+    return d.toLocaleString("en-GB", {
+      timeZone: tz,
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch {
-    return `${hour}:00`;
+    return iso;
   }
 }
 
@@ -91,12 +100,15 @@ export function registerSettingsHandlers(bot: Bot): void {
       const scheduler = getPipelineSchedulerStatus();
 
       const hour = parseInt(scheduleHour, 10);
-      const localTime = formatTimeInTz(hour, userTz);
+      const localTime = formatLocalHour(hour);
       const tzLabel = getTzShortLabel(userTz);
+      const nextRunLocal = scheduler.nextRun
+        ? formatInstantInTz(scheduler.nextRun, userTz)
+        : null;
 
       let text = "<b>⚙️ Settings</b>\n\n";
       text += `🕐 Pipeline: ${scheduleEnabled ? `✅ ${localTime} (${tzLabel})` : "❌ Disabled"}\n`;
-      if (scheduler.nextRun) text += `Next run: ${scheduler.nextRun}\n`;
+      if (nextRunLocal) text += `Next run: ${nextRunLocal} (${tzLabel})\n`;
       text += `🌍 Timezone: ${tzLabel}\n`;
       text += `🔔 Notifications: ${notifEnabled ? "✅ Enabled" : "🔕 Disabled"}\n`;
 
@@ -238,10 +250,10 @@ export function registerSettingsHandlers(bot: Bot): void {
       }
       keyboard.text("◀️ Back", "x:menu");
 
-      const currentLocalTime = formatTimeInTz(parseInt(currentHour, 10), userTz);
+      const currentLocalTime = formatLocalHour(parseInt(currentHour, 10));
 
       await ctx.editMessageText(
-        `<b>🕐 Set Pipeline Schedule Time</b>\n\nCurrent: <b>${currentLocalTime} (${escapeHtml(tzLabel)})</b>\n\nPick an hour (UTC):`,
+        `<b>🕐 Set Pipeline Schedule Time</b>\n\nCurrent: <b>${currentLocalTime} (${escapeHtml(tzLabel)})</b>\n\nPick an hour in <b>${escapeHtml(tzLabel)}</b>:`,
         { parse_mode: "HTML", reply_markup: keyboard },
       );
     } catch (err) {
@@ -263,7 +275,7 @@ export function registerSettingsHandlers(bot: Bot): void {
       await initializePipelineScheduler();
 
       const userTz = await settingsRepo.getSetting("userTimezone") || "Europe/Berlin";
-      const localTime = formatTimeInTz(hour, userTz);
+      const localTime = formatLocalHour(hour);
       const tzLabel = getTzShortLabel(userTz);
 
       await ctx.answerCallbackQuery(`Schedule set to ${localTime}`);
