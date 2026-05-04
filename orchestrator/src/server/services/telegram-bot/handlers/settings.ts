@@ -1,3 +1,4 @@
+import { logger } from "@infra/logger";
 import { InlineKeyboard } from "grammy";
 import type { Bot } from "grammy";
 import * as settingsRepo from "../../../repositories/settings";
@@ -35,8 +36,38 @@ function getTzShortLabel(tz: string): string {
   return entry ? entry.label : tz;
 }
 
-// Shared state for text input collection
-export const awaitingInput = new Map<number, string>();
+// Shared state for text input collection. Each entry has a TTL so that an
+// orphan prompt (user clicked "Add" then never replied) doesn't capture an
+// unrelated message hours later.
+const AWAITING_INPUT_TTL_MS = 5 * 60 * 1000;
+
+interface AwaitingEntry {
+  action: string;
+  expiresAt: number;
+}
+
+const awaitingInputMap = new Map<number, AwaitingEntry>();
+
+export const awaitingInput = {
+  set(chatId: number, action: string): void {
+    awaitingInputMap.set(chatId, {
+      action,
+      expiresAt: Date.now() + AWAITING_INPUT_TTL_MS,
+    });
+  },
+  get(chatId: number): string | undefined {
+    const entry = awaitingInputMap.get(chatId);
+    if (!entry) return undefined;
+    if (entry.expiresAt <= Date.now()) {
+      awaitingInputMap.delete(chatId);
+      return undefined;
+    }
+    return entry.action;
+  },
+  delete(chatId: number): void {
+    awaitingInputMap.delete(chatId);
+  },
+};
 
 const BLOCKED_PAGE_SIZE = 8;
 
@@ -87,7 +118,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         reply_markup: keyboard,
       });
     } catch (err) {
-      console.error("Settings menu error:", err);
+      logger.error("Settings menu error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error loading settings").catch(() => {});
     }
   });
@@ -110,7 +141,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         { reply_markup: keyboard },
       );
     } catch (err) {
-      console.error("Toggle schedule error:", err);
+      logger.error("Toggle schedule error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error toggling schedule").catch(() => {});
     }
   });
@@ -131,7 +162,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         { reply_markup: keyboard },
       );
     } catch (err) {
-      console.error("Toggle notifications error:", err);
+      logger.error("Toggle notifications error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error toggling notifications").catch(() => {});
     }
   });
@@ -157,7 +188,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         { parse_mode: "HTML", reply_markup: keyboard },
       );
     } catch (err) {
-      console.error("Timezone picker error:", err);
+      logger.error("Timezone picker error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error loading timezones").catch(() => {});
     }
   });
@@ -183,7 +214,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         },
       );
     } catch (err) {
-      console.error("Set timezone error:", err);
+      logger.error("Set timezone error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error setting timezone").catch(() => {});
     }
   });
@@ -214,7 +245,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         { parse_mode: "HTML", reply_markup: keyboard },
       );
     } catch (err) {
-      console.error("Time picker error:", err);
+      logger.error("Time picker error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error loading time picker").catch(() => {});
     }
   });
@@ -245,7 +276,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         },
       );
     } catch (err) {
-      console.error("Set hour error:", err);
+      logger.error("Set hour error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error setting hour").catch(() => {});
     }
   });
@@ -263,7 +294,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         },
       );
     } catch (err) {
-      console.error("Link code error:", err);
+      logger.error("Link code error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error generating link code").catch(() => {});
     }
   });
@@ -321,7 +352,7 @@ export function registerSettingsHandlers(bot: Bot): void {
 
       await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
     } catch (err) {
-      console.error("Blocked companies list error:", err);
+      logger.error("Blocked companies list error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error loading blocked companies").catch(() => {});
     }
   });
@@ -345,7 +376,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         reply_markup: new InlineKeyboard().text("◀️ Back", "x:blocked:0"),
       });
     } catch (err) {
-      console.error("Add blocked prompt error:", err);
+      logger.error("Add blocked prompt error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error").catch(() => {});
     }
   });
@@ -375,7 +406,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         { parse_mode: "HTML", reply_markup: keyboard },
       );
     } catch (err) {
-      console.error("Remove blocked keyword error:", err);
+      logger.error("Remove blocked keyword error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error").catch(() => {});
     }
   });
@@ -389,7 +420,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         reply_markup: new InlineKeyboard().text("◀️ Settings", "x:menu").text("◀️ Menu", "m:menu"),
       });
     } catch (err) {
-      console.error("Clear blocked error:", err);
+      logger.error("Clear blocked error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error").catch(() => {});
     }
   });
@@ -449,7 +480,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         return;
       }
     } catch (err) {
-      console.error("Text input handler error:", err);
+      logger.error("Text input handler error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.reply("❌ Error saving setting.").catch(() => {});
     }
 
@@ -487,7 +518,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         reply_markup: keyboard,
       });
     } catch (err) {
-      console.error("Main menu error:", err);
+      logger.error("Main menu error", { error: err instanceof Error ? err.message : String(err) });
       await ctx.answerCallbackQuery("❌ Error loading menu").catch(() => {});
     }
   });

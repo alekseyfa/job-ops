@@ -90,15 +90,13 @@ export function registerJobHandlers(bot: Bot): void {
     await ctx.answerCallbackQuery();
     const shortId = ctx.match![1];
 
-    // Find job by short ID prefix
-    const allJobs = await jobsRepo.getJobListItems();
-    const match = allJobs.find((j) => j.id.startsWith(shortId));
-    if (!match) {
+    const fullId = await jobsRepo.getJobIdByShortId(shortId);
+    if (!fullId) {
       await ctx.editMessageText("Job not found.");
       return;
     }
 
-    const job = await jobsRepo.getJobById(match.id);
+    const job = await jobsRepo.getJobById(fullId);
     if (!job) {
       await ctx.editMessageText("Job not found.");
       return;
@@ -152,8 +150,12 @@ export function registerJobHandlers(bot: Bot): void {
   // Mark applied
   bot.callbackQuery(/^j:apply:(.+)$/, async (ctx) => {
     const shortId = ctx.match![1];
-    const allJobs = await jobsRepo.getJobListItems();
-    const match = allJobs.find((j) => j.id.startsWith(shortId));
+    const fullId = await jobsRepo.getJobIdByShortId(shortId);
+    if (!fullId) {
+      await ctx.answerCallbackQuery("Job not found");
+      return;
+    }
+    const match = await jobsRepo.getJobById(fullId);
     if (!match) {
       await ctx.answerCallbackQuery("Job not found");
       return;
@@ -164,7 +166,7 @@ export function registerJobHandlers(bot: Bot): void {
       appliedAt: new Date().toISOString(),
     });
     await ctx.answerCallbackQuery("✅ Marked as applied!");
-    await ctx.editMessageText(`✅ <b>${match.title}</b> marked as applied!`, {
+    await ctx.editMessageText(`✅ <b>${escapeHtml(match.title)}</b> marked as applied!`, {
       parse_mode: "HTML",
       reply_markup: new InlineKeyboard().text("◀️ Back", "j:ready:0").text("◀️ Menu", "m:menu"),
     });
@@ -173,8 +175,12 @@ export function registerJobHandlers(bot: Bot): void {
   // Mark in progress
   bot.callbackQuery(/^j:inprog:(.+)$/, async (ctx) => {
     const shortId = ctx.match![1];
-    const allJobs = await jobsRepo.getJobListItems();
-    const match = allJobs.find((j) => j.id.startsWith(shortId));
+    const fullId = await jobsRepo.getJobIdByShortId(shortId);
+    if (!fullId) {
+      await ctx.answerCallbackQuery("Job not found");
+      return;
+    }
+    const match = await jobsRepo.getJobById(fullId);
     if (!match) {
       await ctx.answerCallbackQuery("Job not found");
       return;
@@ -182,7 +188,7 @@ export function registerJobHandlers(bot: Bot): void {
 
     await jobsRepo.updateJob(match.id, { status: "in_progress" });
     await ctx.answerCallbackQuery("🔄 Marked as in progress!");
-    await ctx.editMessageText(`🔄 <b>${match.title}</b> marked as in progress.`, {
+    await ctx.editMessageText(`🔄 <b>${escapeHtml(match.title)}</b> marked as in progress.`, {
       parse_mode: "HTML",
       reply_markup: new InlineKeyboard().text("◀️ Back", "j:applied:0").text("◀️ Menu", "m:menu"),
     });
@@ -191,8 +197,12 @@ export function registerJobHandlers(bot: Bot): void {
   // Skip job
   bot.callbackQuery(/^j:skip:(.+)$/, async (ctx) => {
     const shortId = ctx.match![1];
-    const allJobs = await jobsRepo.getJobListItems();
-    const match = allJobs.find((j) => j.id.startsWith(shortId));
+    const fullId = await jobsRepo.getJobIdByShortId(shortId);
+    if (!fullId) {
+      await ctx.answerCallbackQuery("Job not found");
+      return;
+    }
+    const match = await jobsRepo.getJobById(fullId);
     if (!match) {
       await ctx.answerCallbackQuery("Job not found");
       return;
@@ -200,7 +210,7 @@ export function registerJobHandlers(bot: Bot): void {
 
     await jobsRepo.updateJob(match.id, { status: "skipped" });
     await ctx.answerCallbackQuery("⏭ Skipped!");
-    await ctx.editMessageText(`⏭ <b>${match.title}</b> skipped.`, {
+    await ctx.editMessageText(`⏭ <b>${escapeHtml(match.title)}</b> skipped.`, {
       parse_mode: "HTML",
       reply_markup: new InlineKeyboard().text("◀️ Back", "j:ready:0").text("◀️ Menu", "m:menu"),
     });
@@ -209,8 +219,12 @@ export function registerJobHandlers(bot: Bot): void {
   // Block company — add to blocklist and skip job
   bot.callbackQuery(/^j:block:(.+)$/, async (ctx) => {
     const shortId = ctx.match![1];
-    const allJobs = await jobsRepo.getJobListItems();
-    const match = allJobs.find((j) => j.id.startsWith(shortId));
+    const fullId = await jobsRepo.getJobIdByShortId(shortId);
+    if (!fullId) {
+      await ctx.answerCallbackQuery("Job not found");
+      return;
+    }
+    const match = await jobsRepo.getJobById(fullId);
     if (!match) {
       await ctx.answerCallbackQuery("Job not found");
       return;
@@ -253,11 +267,10 @@ export function registerJobHandlers(bot: Bot): void {
   bot.callbackQuery(/^j:pdf:(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery("Sending PDF...");
     const shortId = ctx.match![1];
-    const allJobs = await jobsRepo.getJobListItems();
-    const match = allJobs.find((j) => j.id.startsWith(shortId));
-    if (!match) return;
+    const fullId = await jobsRepo.getJobIdByShortId(shortId);
+    if (!fullId) return;
 
-    const job = await jobsRepo.getJobById(match.id);
+    const job = await jobsRepo.getJobById(fullId);
     if (!job?.pdfPath) {
       await ctx.reply("No PDF available for this job.");
       return;

@@ -44,7 +44,8 @@ export async function sendChangelogIfNeeded(): Promise<void> {
   const chatIds = await getAuthorizedChatIds();
   if (chatIds.size === 0) return;
 
-  let sentAny = false;
+  let successCount = 0;
+  let failureCount = 0;
 
   for (const chatId of chatIds) {
     try {
@@ -66,8 +67,9 @@ export async function sendChangelogIfNeeded(): Promise<void> {
         });
       }
 
-      sentAny = true;
+      successCount += 1;
     } catch (err) {
+      failureCount += 1;
       logger.warn("Failed to send changelog notification", {
         chatId,
         error: err instanceof Error ? err.message : String(err),
@@ -75,11 +77,19 @@ export async function sendChangelogIfNeeded(): Promise<void> {
     }
   }
 
-  if (sentAny) {
+  // Only advance the cursor when every authorized chat got the message.
+  // Otherwise failed chats would silently miss this changelog forever.
+  if (failureCount === 0 && successCount > 0) {
     await setLastSentVersion(getLatestChangelogVersion());
     logger.info("Changelog notification sent", {
       version: getLatestChangelogVersion(),
       chatCount: chatIds.size,
+    });
+  } else if (failureCount > 0) {
+    logger.warn("Changelog cursor not advanced — will retry next startup", {
+      version: getLatestChangelogVersion(),
+      successCount,
+      failureCount,
     });
   }
 }

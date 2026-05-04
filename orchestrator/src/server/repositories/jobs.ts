@@ -20,7 +20,7 @@ import type {
   LocationEvidence,
   LocationEvidenceEntry,
 } from "@shared/types/location";
-import { and, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, lt, ne, sql } from "drizzle-orm";
 import { db, schema } from "../db/index";
 import { getActiveTenantId } from "../tenancy/context";
 
@@ -224,6 +224,26 @@ export async function getJobById(id: string): Promise<Job | null> {
     .from(jobs)
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)));
   return row ? mapRowToJob(row) : null;
+}
+
+/**
+ * Resolve a short ID prefix (used by Telegram callbacks where button-data is
+ * limited to 64 bytes) to a full job ID. Returns null if no match or if the
+ * prefix is ambiguous (matches multiple jobs).
+ */
+export async function getJobIdByShortId(
+  shortId: string,
+): Promise<string | null> {
+  const trimmed = shortId.trim();
+  if (!trimmed || !/^[0-9a-f-]+$/i.test(trimmed)) return null;
+  const tenantId = getActiveTenantId();
+  const rows = await db
+    .select({ id: jobs.id })
+    .from(jobs)
+    .where(and(eq(jobs.tenantId, tenantId), like(jobs.id, `${trimmed}%`)))
+    .limit(2);
+  if (rows.length !== 1) return null;
+  return rows[0].id;
 }
 
 export async function listJobNotes(jobId: string): Promise<JobNote[]> {
