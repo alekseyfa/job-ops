@@ -42,6 +42,7 @@ import {
   updatePipelineRunResultSummary,
 } from "./run-details";
 import {
+  checkLivenessStep,
   discoverJobsStep,
   importJobsStep,
   loadProfileStep,
@@ -345,6 +346,18 @@ export async function runPipeline(
       await pipelineRepo.updatePipelineRun(pipelineRun.id, {
         jobsDiscovered: created,
       });
+
+      ensureNotCancelled(tenantId);
+      await persistResultSummary({ stage: "liveness" });
+      const { expired: jobsExpired } = await checkLivenessStep({
+        shouldCancel: () =>
+          getPipelineState(tenantId).cancelRequestedAt !== null,
+      });
+      if (jobsExpired > 0) {
+        pipelineLogger.info("Liveness check removed expired jobs", {
+          expired: jobsExpired,
+        });
+      }
 
       ensureNotCancelled(tenantId);
       await persistResultSummary({ stage: "scoring" });
