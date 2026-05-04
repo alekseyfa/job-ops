@@ -74,8 +74,13 @@ RUN --mount=type=cache,target=/root/.npm \
     --no-audit --no-fund --progress=false
 
 # Fetch Camoufox binaries before copying source to keep the download cached.
+# The fetch may fail behind corporate proxies (Node fetch doesn't honour
+# HTTPS_PROXY).  Allow it to fail gracefully – the app works without Camoufox.
+ARG HTTPS_PROXY
+ARG HTTP_PROXY
 RUN --mount=type=secret,id=github_token,required=false \
-    sh -c 'GITHUB_TOKEN="$([ -f /run/secrets/github_token ] && cat /run/secrets/github_token || true)" node ./scripts/camoufox-fetch.mjs'
+    sh -c 'GITHUB_TOKEN="$([ -f /run/secrets/github_token ] && cat /run/secrets/github_token || true)" node ./scripts/camoufox-fetch.mjs || echo "WARN: Camoufox fetch failed (non-fatal)"' && \
+    mkdir -p /root/.cache/camoufox
 
 FROM node-deps AS build-sources
 

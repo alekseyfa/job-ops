@@ -37,6 +37,18 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.2.0",
+    date: "2026-05-04",
+    items: [
+      {
+        title: "🏢 Workday Support",
+        description:
+          "Track jobs from Workday companies like BMW, Siemens, Intel, and thousands more. Just type the company name — the bot finds the careers page automatically.",
+        tip: 'Go to 📡 Boards → + Add → 🏢 Workday → type "BMW" and the bot does the rest.',
+      },
+    ],
+  },
+  {
     version: "1.1.0",
     date: "2026-05-03",
     items: [

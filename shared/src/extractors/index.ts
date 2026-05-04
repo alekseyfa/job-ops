@@ -15,6 +15,7 @@ export const EXTRACTOR_SOURCE_IDS = [
   "greenhouse",
   "ashby",
   "lever",
+  "workday",
   "manual",
 ] as const;
 
@@ -75,6 +76,7 @@ export const EXTRACTOR_SOURCE_METADATA: Record<
   greenhouse: { label: "Greenhouse", order: 111, category: "pipeline" },
   ashby: { label: "Ashby", order: 112, category: "pipeline" },
   lever: { label: "Lever", order: 113, category: "pipeline" },
+  workday: { label: "Workday", order: 114, category: "pipeline" },
   manual: { label: "Manual", order: 120, category: "manual" },
 };
 

@@ -6,6 +6,7 @@ import type { CreateJobInput } from "@shared/types/jobs";
 import { fetchAshbyJobs } from "./ashby";
 import { fetchGreenhouseJobs } from "./greenhouse";
 import { fetchLeverJobs } from "./lever";
+import { fetchWorkdayJobs } from "./workday";
 import type { AtsBoardEntry } from "./types";
 
 const PROVIDER_FETCHERS: Record<
@@ -15,6 +16,7 @@ const PROVIDER_FETCHERS: Record<
   greenhouse: fetchGreenhouseJobs,
   ashby: fetchAshbyJobs,
   lever: fetchLeverJobs,
+  workday: fetchWorkdayJobs,
 };
 
 function parseAtsBoardSlugs(raw: string | undefined): AtsBoardEntry[] {
@@ -38,8 +40,8 @@ function parseAtsBoardSlugs(raw: string | undefined): AtsBoardEntry[] {
 
 export const manifest: ExtractorManifest = {
   id: "ats-boards",
-  displayName: "ATS Boards (Greenhouse, Ashby, Lever)",
-  providesSources: ["greenhouse", "ashby", "lever"],
+  displayName: "ATS Boards (Greenhouse, Ashby, Lever, Workday)",
+  providesSources: ["greenhouse", "ashby", "lever", "workday"],
 
   async run(context) {
     const entries = parseAtsBoardSlugs(context.settings.atsBoardSlugs);

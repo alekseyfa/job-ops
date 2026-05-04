@@ -262,6 +262,7 @@ export const DEMO_SOURCE_BASE_URLS: Record<JobSource, string> = {
   greenhouse: "https://boards.greenhouse.io",
   ashby: "https://jobs.ashbyhq.com",
   lever: "https://jobs.lever.co",
+  workday: "https://myworkdayjobs.com",
   manual: "https://example.com",
 };
 
