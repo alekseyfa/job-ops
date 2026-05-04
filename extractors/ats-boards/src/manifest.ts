@@ -3,6 +3,7 @@ import type {
   ExtractorProgressEvent,
 } from "@shared/types/extractors";
 import type { CreateJobInput } from "@shared/types/jobs";
+import { createRateLimitedFetch } from "job-ops-shared/utils/rate-limited-fetch";
 import { fetchAshbyJobs } from "./ashby";
 import { fetchGreenhouseJobs } from "./greenhouse";
 import { fetchLeverJobs } from "./lever";
@@ -76,7 +77,8 @@ export const manifest: ExtractorManifest = {
 
       try {
         const fetcher = PROVIDER_FETCHERS[entry.provider];
-        const jobs = await fetcher(entry.slug);
+        const rateLimitedFetch = createRateLimitedFetch(entry.provider);
+        const jobs = await fetcher(entry.slug, rateLimitedFetch);
 
         for (const job of jobs) {
           const key = job.jobUrl || `${job.source}:${job.sourceJobId}`;
