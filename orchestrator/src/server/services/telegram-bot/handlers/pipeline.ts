@@ -361,7 +361,23 @@ export function registerPipelineHandlers(bot: Bot): void {
       });
 
       try {
-        await runPipeline();
+        const result = await runPipeline();
+        if (!result.success && result.error) {
+          await ctx.api
+            .editMessageText(
+              chatId,
+              messageId,
+              `<b>❌ Pipeline Error</b>\n\n${escapeHtml(result.error)}`,
+              {
+                parse_mode: "HTML",
+                reply_markup: new InlineKeyboard()
+                  .text("🔄 Retry", "p:run")
+                  .row()
+                  .text("◀️ Menu", "m:menu"),
+              },
+            )
+            .catch(() => {});
+        }
       } finally {
         unsubscribe();
       }

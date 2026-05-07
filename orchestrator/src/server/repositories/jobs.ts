@@ -673,6 +673,19 @@ export async function getUnscoredDiscoveredJobs(
 }
 
 /**
+ * Delete a single job by ID. Cascade deletes are configured for related tables
+ * (stage_events, application_tasks, job_notes, interviews, jobChat*).
+ */
+export async function deleteJob(id: string): Promise<boolean> {
+  const tenantId = getActiveTenantId();
+  const result = await db
+    .delete(jobs)
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
+    .run();
+  return result.changes > 0;
+}
+
+/**
  * Delete jobs by status.
  */
 export async function deleteJobsByStatus(status: JobStatus): Promise<number> {
@@ -734,6 +747,8 @@ function mapRowToJob(row: typeof jobs.$inferSelect): Job {
     tailoredSkills: row.tailoredSkills ?? null,
     selectedProjectIds: row.selectedProjectIds ?? null,
     pdfPath: row.pdfPath,
+    coverLetterText: row.coverLetterText ?? null,
+    coverLetterPdfPath: row.coverLetterPdfPath ?? null,
     tracerLinksEnabled: row.tracerLinksEnabled ?? false,
     sponsorMatchScore: row.sponsorMatchScore ?? null,
     sponsorMatchNames: row.sponsorMatchNames ?? null,

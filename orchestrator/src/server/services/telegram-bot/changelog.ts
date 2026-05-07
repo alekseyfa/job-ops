@@ -37,6 +37,24 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.0",
+    date: "2026-05-07",
+    items: [
+      {
+        title: "📝 Cover Letter Generator",
+        description:
+          "Generate a tailored PDF cover letter for any job on demand. The letter references specific details from the job description and maps your profile to the role's requirements.",
+        tip: "Open a job → tap 📝 Cover Letter. Use 🔄 Regenerate Cover Letter to get a fresh version.",
+      },
+      {
+        title: "🤝 Ask for Referral",
+        description:
+          "Generate a personalized LinkedIn message you can send to someone at the target company to ask for a referral. The message is tailored to the role, the company, and your background.",
+        tip: "Open a job → tap 🤝 Ask for Referral → tap the message to copy it, then replace [Name] before sending on LinkedIn.",
+      },
+    ],
+  },
+  {
     version: "1.3.0",
     date: "2026-05-04",
     items: [
