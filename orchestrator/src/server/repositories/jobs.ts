@@ -20,7 +20,7 @@ import type {
   LocationEvidence,
   LocationEvidenceEntry,
 } from "@shared/types/location";
-import { and, desc, eq, inArray, isNull, like, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, lt, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "../db/index";
 import { getActiveTenantId } from "../tenancy/context";
 
@@ -212,6 +212,67 @@ export async function getJobsRevision(
     total,
     statusFilter,
   };
+}
+
+/**
+ * Search jobs by free-text query across title, employer, and location.
+ */
+export async function searchJobs(
+  query: string,
+  limit: number = 20,
+): Promise<JobListItem[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+  const tenantId = getActiveTenantId();
+  const escaped = trimmed.replace(/[\\%_]/g, (c) => `\\${c}`);
+  const pattern = `%${escaped}%`;
+
+  const rows = await db
+    .select({
+      id: jobs.id,
+      source: jobs.source,
+      title: jobs.title,
+      employer: jobs.employer,
+      jobUrl: jobs.jobUrl,
+      applicationLink: jobs.applicationLink,
+      datePosted: jobs.datePosted,
+      deadline: jobs.deadline,
+      salary: jobs.salary,
+      location: jobs.location,
+      status: jobs.status,
+      outcome: jobs.outcome,
+      closedAt: jobs.closedAt,
+      suitabilityScore: jobs.suitabilityScore,
+      sponsorMatchScore: jobs.sponsorMatchScore,
+      jobType: jobs.jobType,
+      jobFunction: jobs.jobFunction,
+      salaryMinAmount: jobs.salaryMinAmount,
+      salaryMaxAmount: jobs.salaryMaxAmount,
+      salaryCurrency: jobs.salaryCurrency,
+      discoveredAt: jobs.discoveredAt,
+      readyAt: jobs.readyAt,
+      appliedAt: jobs.appliedAt,
+      updatedAt: jobs.updatedAt,
+    })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.tenantId, tenantId),
+        or(
+          like(jobs.title, pattern),
+          like(jobs.employer, pattern),
+          like(jobs.location, pattern),
+        ),
+      ),
+    )
+    .orderBy(desc(jobs.discoveredAt))
+    .limit(limit);
+
+  return rows.map((row) => ({
+    ...row,
+    source: row.source as JobListItem["source"],
+    status: row.status as JobStatus,
+  }));
 }
 
 /**

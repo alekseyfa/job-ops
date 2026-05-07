@@ -120,6 +120,59 @@ export function createBot(token: string): Bot {
     await sendFullChangelog(ctx.chat.id);
   });
 
+  // /search <query> — find jobs by title, employer, or location
+  botInstance.command("search", async (ctx) => {
+    const { searchJobs } = await import("../../repositories/jobs");
+    const { escapeHtml, formatJobListItem } = await import("./formatting");
+
+    const query = (ctx.match || "").trim();
+    if (!query) {
+      await ctx.reply(
+        "Usage: <code>/search &lt;keyword&gt;</code>\n" +
+          "<i>Searches across job title, company, and location.</i>\n" +
+          "Examples: <code>/search Berlin</code>, <code>/search Senior PM</code>, <code>/search BMW</code>",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+
+    if (query.length < 2) {
+      await ctx.reply("🔎 Query too short. Use at least 2 characters.");
+      return;
+    }
+
+    try {
+      const results = await searchJobs(query, 20);
+      if (results.length === 0) {
+        await ctx.reply(`🔎 No jobs match <b>${escapeHtml(query)}</b>.`, {
+          parse_mode: "HTML",
+        });
+        return;
+      }
+
+      const text =
+        `<b>🔎 Search: ${escapeHtml(query)} (${results.length})</b>\n\n` +
+        results.map((j, i) => formatJobListItem(j, i)).join("\n\n");
+
+      const keyboard = new InlineKeyboard();
+      for (const j of results.slice(0, 10)) {
+        const shortId = j.id.slice(0, 8);
+        const score = j.suitabilityScore !== null ? `⭐${j.suitabilityScore}` : "";
+        const company = j.employer.slice(0, 15);
+        const title = j.title.slice(0, 22);
+        keyboard.text(`${score} ${title} · ${company}`, `j:d:${shortId}`).row();
+      }
+      keyboard.text("◀️ Menu", "m:menu");
+
+      await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
+    } catch (err) {
+      logger.error("Search command error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await ctx.reply("❌ Search failed. Try again.");
+    }
+  });
+
   bot = botInstance;
   return botInstance;
 }

@@ -1,7 +1,9 @@
+import { logger } from "@infra/logger";
 import { InlineKeyboard } from "grammy";
 import type { Bot } from "grammy";
 import { discoverWorkdayUrl, parseWorkdayUrl } from "@extractors/ats-boards/src/workday";
 import * as settingsRepo from "../../../repositories/settings";
+import { awaitingInput } from "../awaiting-input";
 import { escapeHtml } from "../formatting";
 
 interface AtsBoardEntry {
@@ -17,8 +19,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   smartrecruiters: "📋 SmartRecruiters",
 };
 
-// Shared state for text input collection
-export const awaitingBoardInput = new Map<number, string>();
+// awaitingInput action prefix for board flow: "board:<provider>"
+const BOARD_PAGE_SIZE = 8;
 
 function parseBoards(raw: string | null): AtsBoardEntry[] {
   if (!raw) return [];
@@ -39,56 +41,86 @@ async function saveBoards(boards: AtsBoardEntry[]): Promise<void> {
   await settingsRepo.setSetting("atsBoardSlugs", JSON.stringify(boards));
 }
 
+function buildBoardsListView(
+  boards: AtsBoardEntry[],
+  page: number,
+): { text: string; keyboard: InlineKeyboard } {
+  const totalPages = Math.max(1, Math.ceil(boards.length / BOARD_PAGE_SIZE));
+  const safePage = Math.min(Math.max(page, 0), totalPages - 1);
+  const pageItems = boards.slice(
+    safePage * BOARD_PAGE_SIZE,
+    (safePage + 1) * BOARD_PAGE_SIZE,
+  );
+
+  let text = "<b>📡 ATS Boards</b>\n\n";
+  text +=
+    "Track company career pages directly.\n" +
+    "Zero tokens — uses public ATS APIs.\n\n";
+
+  if (boards.length === 0) {
+    text += "<i>No companies tracked yet.</i>\n";
+    text += "\nTap <b>+ Add</b> to start tracking.";
+  } else {
+    for (const [i, entry] of boards.entries()) {
+      const label = PROVIDER_LABELS[entry.provider] ?? entry.provider;
+      text += `${i + 1}. ${label} — <b>${escapeHtml(entry.slug)}</b>\n`;
+    }
+    text += `\n${boards.length} board(s) tracked.`;
+  }
+
+  const keyboard = new InlineKeyboard()
+    .text("+ Add", "b:add")
+    .text("❓ Help", "b:help");
+
+  if (boards.length > 0) {
+    keyboard.row();
+    for (let i = 0; i < pageItems.length; i++) {
+      const globalIdx = safePage * BOARD_PAGE_SIZE + i;
+      keyboard.text(`🗑 ${pageItems[i].slug}`, `b:rm:${globalIdx}`);
+      if ((i + 1) % 2 === 0) keyboard.row();
+    }
+    if (pageItems.length % 2 === 1) keyboard.row();
+
+    if (totalPages > 1) {
+      if (safePage > 0) keyboard.text("◀️", `b:menu:${safePage - 1}`);
+      keyboard.text(`${safePage + 1}/${totalPages}`, "noop");
+      if (safePage < totalPages - 1)
+        keyboard.text("▶️", `b:menu:${safePage + 1}`);
+      keyboard.row();
+    }
+  }
+
+  keyboard.text("🏠 Menu", "m:menu");
+
+  return { text, keyboard };
+}
+
+function logErr(scope: string, err: unknown): void {
+  logger.error(scope, { error: err instanceof Error ? err.message : String(err) });
+}
+
 export function registerBoardHandlers(bot: Bot): void {
-  // Board list menu
-  bot.callbackQuery("b:menu", async (ctx) => {
+  // Board list menu — supports b:menu and b:menu:<page>
+  bot.callbackQuery(/^b:menu(?::(\d+))?$/, async (ctx) => {
     try {
       await ctx.answerCallbackQuery();
+      const page = ctx.match![1] ? parseInt(ctx.match![1], 10) : 0;
       const boards = await getBoards();
+      const { text, keyboard } = buildBoardsListView(boards, page);
 
-      let text = "<b>📡 ATS Boards</b>\n\n";
-      text +=
-        "Track company career pages directly.\n" +
-        "Zero tokens — uses public ATS APIs.\n\n";
-
-      if (boards.length === 0) {
-        text += "<i>No companies tracked yet.</i>\n";
-        text += "\nTap <b>+ Add</b> to start tracking.";
-      } else {
-        for (const [i, entry] of boards.entries()) {
-          const label = PROVIDER_LABELS[entry.provider] ?? entry.provider;
-          text += `${i + 1}. ${label} — <b>${escapeHtml(entry.slug)}</b>\n`;
-        }
-        text += `\n${boards.length} board(s) tracked.`;
+      try {
+        await ctx.editMessageText(text, {
+          parse_mode: "HTML",
+          reply_markup: keyboard,
+        });
+      } catch {
+        await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
       }
-
-      const keyboard = new InlineKeyboard()
-        .text("+ Add", "b:add")
-        .text("❓ Help", "b:help");
-
-      if (boards.length > 0) {
-        keyboard.row();
-        // Show remove buttons (max 8 per page)
-        const shown = boards.slice(0, 8);
-        for (let i = 0; i < shown.length; i++) {
-          keyboard.text(
-            `🗑 ${shown[i].slug}`,
-            `b:rm:${i}`,
-          );
-          if ((i + 1) % 2 === 0) keyboard.row();
-        }
-      }
-
-      keyboard.row().text("🏠 Menu", "m:menu");
-
-      await ctx.editMessageText(text, {
-        parse_mode: "HTML",
-        reply_markup: keyboard,
-      }).catch(() =>
-        ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard }),
+    } catch (err) {
+      logErr("Boards menu error", err);
+      await ctx.reply("❌ Failed to load boards.").catch((e) =>
+        logErr("Boards reply error", e),
       );
-    } catch (error) {
-      await ctx.reply("Failed to load boards.").catch(() => {});
     }
   });
 
@@ -117,9 +149,10 @@ export function registerBoardHandlers(bot: Bot): void {
           '🏢 <b>Workday</b> — BMW, Siemens, Intel, Allianz... (auto-detect!)\n' +
           '📋 <b>SmartRecruiters</b> — Visa, IKEA, Bosch, Sanofi...',
         { parse_mode: "HTML", reply_markup: keyboard },
-      ).catch(() => {});
-    } catch {
-      await ctx.reply("Error").catch(() => {});
+      );
+    } catch (err) {
+      logErr("Boards add menu error", err);
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
     }
   });
 
@@ -131,7 +164,7 @@ export function registerBoardHandlers(bot: Bot): void {
         const chatId = ctx.chat?.id;
         if (!chatId) return;
 
-        awaitingBoardInput.set(chatId, provider);
+        awaitingInput.set(chatId, `board:${provider}`);
 
         const label = PROVIDER_LABELS[provider];
         await ctx.editMessageText(
@@ -140,9 +173,10 @@ export function registerBoardHandlers(bot: Bot): void {
             "<i>Example: for jobs.greenhouse.io/<b>stripe</b>, send: stripe</i>\n\n" +
             "Send /cancel to go back.",
           { parse_mode: "HTML" },
-        ).catch(() => {});
-      } catch {
-        await ctx.reply("Error").catch(() => {});
+        );
+      } catch (err) {
+        logErr(`Boards provider:${provider} prompt error`, err);
+        await ctx.answerCallbackQuery("❌ Error").catch(() => {});
       }
     });
   }
@@ -154,7 +188,7 @@ export function registerBoardHandlers(bot: Bot): void {
       const chatId = ctx.chat?.id;
       if (!chatId) return;
 
-      awaitingBoardInput.set(chatId, "workday");
+      awaitingInput.set(chatId, "board:workday");
 
       await ctx.editMessageText(
         "🏢 <b>Workday</b>\n\n" +
@@ -164,9 +198,10 @@ export function registerBoardHandlers(bot: Bot): void {
           "<i>bmw.wd3.myworkdayjobs.com/BMW_Karriere_Extern</i>\n\n" +
           "Send /cancel to go back.",
         { parse_mode: "HTML" },
-      ).catch(() => {});
-    } catch {
-      await ctx.reply("Error").catch(() => {});
+      );
+    } catch (err) {
+      logErr("Boards workday prompt error", err);
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
     }
   });
 
@@ -177,47 +212,34 @@ export function registerBoardHandlers(bot: Bot): void {
       const index = parseInt(ctx.match[1], 10);
       const boards = await getBoards();
 
-      if (index >= 0 && index < boards.length) {
-        const removed = boards[index];
-        boards.splice(index, 1);
-        await saveBoards(boards);
-
-        await ctx.reply(
-          `🗑 Removed <b>${escapeHtml(removed.slug)}</b> (${removed.provider})`,
-          { parse_mode: "HTML" },
-        );
+      if (index < 0 || index >= boards.length) {
+        await ctx.answerCallbackQuery("Invalid index").catch(() => {});
+        return;
       }
 
-      // Refresh the menu by simulating the callback
-      // Re-render boards menu
+      const removed = boards[index];
+      boards.splice(index, 1);
+      await saveBoards(boards);
+
+      await ctx.reply(
+        `🗑 Removed <b>${escapeHtml(removed.slug)}</b> (${removed.provider})`,
+        { parse_mode: "HTML" },
+      );
+
+      // Re-render list, snapping to a valid page after removal.
       const updatedBoards = await getBoards();
-      let text = "<b>📡 ATS Boards</b>\n\n";
-      if (updatedBoards.length === 0) {
-        text += "<i>No companies tracked yet.</i>\n\nTap <b>+ Add</b> to start tracking.";
-      } else {
-        for (const [i, entry] of updatedBoards.entries()) {
-          const label = PROVIDER_LABELS[entry.provider] ?? entry.provider;
-          text += `${i + 1}. ${label} — <b>${escapeHtml(entry.slug)}</b>\n`;
-        }
-        text += `\n${updatedBoards.length} board(s) tracked.`;
-      }
-      const keyboard = new InlineKeyboard()
-        .text("+ Add", "b:add")
-        .text("❓ Help", "b:help");
-      if (updatedBoards.length > 0) {
-        keyboard.row();
-        for (let i = 0; i < Math.min(updatedBoards.length, 8); i++) {
-          keyboard.text(`🗑 ${updatedBoards[i].slug}`, `b:rm:${i}`);
-          if ((i + 1) % 2 === 0) keyboard.row();
-        }
-      }
-      keyboard.row().text("🏠 Menu", "m:menu");
+      const page = Math.min(
+        Math.floor(index / BOARD_PAGE_SIZE),
+        Math.max(0, Math.ceil(updatedBoards.length / BOARD_PAGE_SIZE) - 1),
+      );
+      const { text, keyboard } = buildBoardsListView(updatedBoards, page);
       await ctx.editMessageText(text, {
         parse_mode: "HTML",
         reply_markup: keyboard,
-      }).catch(() => {});
-    } catch {
-      await ctx.reply("Failed to remove board.").catch(() => {});
+      });
+    } catch (err) {
+      logErr("Boards remove error", err);
+      await ctx.reply("❌ Failed to remove board.").catch(() => {});
     }
   });
 
@@ -247,9 +269,10 @@ export function registerBoardHandlers(bot: Bot): void {
           parse_mode: "HTML",
           reply_markup: new InlineKeyboard().text("« Back", "b:menu"),
         },
-      ).catch(() => {});
-    } catch {
-      await ctx.reply("Error").catch(() => {});
+      );
+    } catch (err) {
+      logErr("Boards help error", err);
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
     }
   });
 
@@ -258,25 +281,23 @@ export function registerBoardHandlers(bot: Bot): void {
     const chatId = ctx.chat?.id;
     if (!chatId) return next();
 
-    const provider = awaitingBoardInput.get(chatId);
-    if (!provider) return next();
-    awaitingBoardInput.delete(chatId);
+    const action = awaitingInput.get(chatId);
+    if (!action || !action.startsWith("board:")) return next();
+    awaitingInput.delete(chatId);
 
+    const provider = action.slice("board:".length);
     const text = ctx.message.text.trim();
 
-    // Allow cancel
     if (text === "/cancel") {
       await ctx.reply("Cancelled.");
       return;
     }
 
-    // Workday: auto-discovery or direct URL
     if (provider === "workday" || provider === "workday_manual") {
       await handleWorkdayInput(ctx, text, provider === "workday_manual");
       return;
     }
 
-    // Validate slug: alphanumeric + hyphens only
     if (!/^[a-zA-Z0-9][-a-zA-Z0-9]*$/.test(text) || text.length > 100) {
       await ctx.reply(
         "Invalid slug. Use only letters, numbers, and hyphens.\nExample: <b>stripe</b>",
@@ -288,7 +309,6 @@ export function registerBoardHandlers(bot: Bot): void {
     const slug = text.toLowerCase();
     const boards = await getBoards();
 
-    // Check for duplicates
     const exists = boards.some(
       (b) => b.provider === provider && b.slug === slug,
     );
@@ -324,7 +344,6 @@ async function handleWorkdayInput(
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
-  // If it looks like a Workday URL, use it directly
   if (text.includes("myworkdayjobs.com")) {
     const config = parseWorkdayUrl(text);
     if (!config) {
@@ -341,7 +360,6 @@ async function handleWorkdayInput(
     return;
   }
 
-  // Manual URL mode — user didn't pass a URL
   if (isManualUrl) {
     await ctx.reply(
       "Please paste a full Workday careers URL containing <b>myworkdayjobs.com</b>.",
@@ -350,7 +368,6 @@ async function handleWorkdayInput(
     return;
   }
 
-  // Auto-discovery by company name
   await ctx.reply(
     `🔍 Searching for <b>${escapeHtml(text)}</b> on Workday...`,
     { parse_mode: "HTML" },
@@ -361,8 +378,7 @@ async function handleWorkdayInput(
     if (discovered) {
       await addWorkdayBoard(ctx, discovered);
     } else {
-      // Not found — ask for manual URL
-      awaitingBoardInput.set(chatId, "workday_manual");
+      awaitingInput.set(chatId, "board:workday_manual");
       await ctx.reply(
         `Could not auto-detect Workday page for "<b>${escapeHtml(text)}</b>".\n\n` +
           "Please paste the full Workday careers URL:\n" +
@@ -371,8 +387,9 @@ async function handleWorkdayInput(
         { parse_mode: "HTML" },
       );
     }
-  } catch {
-    awaitingBoardInput.set(chatId, "workday_manual");
+  } catch (err) {
+    logErr("Workday auto-discovery error", err);
+    awaitingInput.set(chatId, "board:workday_manual");
     await ctx.reply(
       "Auto-detection failed (network error). Please paste the full Workday URL:\n" +
         "<i>example.wd3.myworkdayjobs.com/External</i>\n\n" +

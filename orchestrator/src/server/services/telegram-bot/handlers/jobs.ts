@@ -160,7 +160,11 @@ export function registerJobHandlers(bot: Bot): void {
       keyboard.row().text("🔜 Auto Apply (coming soon)", "noop");
     }
 
-    keyboard.row().text("◀️ Back", `j:${job.status}:0`);
+    keyboard.row()
+      .text("📋 Jobs", `j:${job.status}:0`)
+      .text("📊 Stats", "s:stats")
+      .text("⚙️ Settings", "x:menu");
+    keyboard.row().text("◀️ Menu", "m:menu");
 
     await ctx.editMessageText(text, {
       parse_mode: "HTML",
@@ -237,8 +241,41 @@ export function registerJobHandlers(bot: Bot): void {
     });
   });
 
-  // Block company — add to blocklist and skip job
+  // Block company — confirm step (destructive: adds to blocklist + skips job)
   bot.callbackQuery(/^j:block:(.+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const shortId = ctx.match![1];
+    const fullId = await jobsRepo.getJobIdByShortId(shortId);
+    if (!fullId) {
+      await ctx.editMessageText("Job not found.");
+      return;
+    }
+    const match = await jobsRepo.getJobById(fullId);
+    if (!match) {
+      await ctx.editMessageText("Job not found.");
+      return;
+    }
+
+    const employer = match.employer.trim();
+    if (!employer) {
+      await ctx.answerCallbackQuery("No employer name").catch(() => {});
+      return;
+    }
+
+    const keyboard = new InlineKeyboard()
+      .text("🚫 Yes, block", `j:blockc:${shortId}`)
+      .text("◀️ Cancel", `j:d:${shortId}`);
+
+    await ctx.editMessageText(
+      `🚫 <b>Block ${escapeHtml(employer)}?</b>\n\n` +
+        `Future jobs from this company will be filtered out during pipeline discovery, and this job will be skipped.\n\n` +
+        `<i>You can unblock later in Settings → Blocked Companies.</i>`,
+      { parse_mode: "HTML", reply_markup: keyboard },
+    );
+  });
+
+  // Block company — confirmed
+  bot.callbackQuery(/^j:blockc:(.+)$/, async (ctx) => {
     const shortId = ctx.match![1];
     const fullId = await jobsRepo.getJobIdByShortId(shortId);
     if (!fullId) {

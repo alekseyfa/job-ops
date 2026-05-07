@@ -37,6 +37,48 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.0",
+    date: "2026-05-07",
+    items: [
+      {
+        title: "🔎 Search Command",
+        description:
+          "Quickly find any job by keyword. Searches across job title, company, and location at once.",
+        tip: "Send /search <keyword> — e.g. /search Berlin, /search Senior PM, /search BMW.",
+      },
+      {
+        title: "🚫 Confirm Before Blocking",
+        description:
+          "Tapping 🚫 Block Company now asks you to confirm before adding the company to your blocklist. No more accidental blocks.",
+      },
+      {
+        title: "🗑 Delete Job & Clear Blocked Companies — Safer",
+        description:
+          "Destructive actions now show a confirmation step so you can cancel before anything is removed.",
+      },
+      {
+        title: "📡 Boards — Pagination & Clearer Errors",
+        description:
+          "If you track many ATS boards, you can now page through them to remove any one. Errors during board operations now surface in chat instead of being silently swallowed.",
+      },
+      {
+        title: "🧭 Faster Navigation",
+        description:
+          "Job detail now has a quick-jump row to Jobs, Stats, and Settings. Settings menu links directly to 📡 Boards.",
+      },
+      {
+        title: "📋 Tap-to-Copy Link Code",
+        description:
+          "The link code shown in /link instructions can now be tapped to copy in one go.",
+      },
+      {
+        title: "🚀 Apply Screen Refresh",
+        description:
+          "The auto-apply screen is clearer about what's available today (manual review with tailored CV, cover letter, and referral message) and what's coming.",
+      },
+    ],
+  },
+  {
     version: "1.4.0",
     date: "2026-05-07",
     items: [

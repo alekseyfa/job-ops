@@ -4,6 +4,7 @@ import type { Bot } from "grammy";
 import * as settingsRepo from "../../../repositories/settings";
 import { initializePipelineScheduler, getPipelineSchedulerStatus } from "../../pipeline-scheduler";
 import { generateLinkCode } from "../auth";
+import { awaitingInput } from "../awaiting-input";
 import { escapeHtml } from "../formatting";
 
 const TIMEZONES = [
@@ -45,39 +46,8 @@ function getTzShortLabel(tz: string): string {
   return entry ? entry.label : tz;
 }
 
-// Shared state for text input collection. Each entry has a TTL so that an
-// orphan prompt (user clicked "Add" then never replied) doesn't capture an
-// unrelated message hours later.
-const AWAITING_INPUT_TTL_MS = 5 * 60 * 1000;
-
-interface AwaitingEntry {
-  action: string;
-  expiresAt: number;
-}
-
-const awaitingInputMap = new Map<number, AwaitingEntry>();
-
-export const awaitingInput = {
-  set(chatId: number, action: string): void {
-    awaitingInputMap.set(chatId, {
-      action,
-      expiresAt: Date.now() + AWAITING_INPUT_TTL_MS,
-    });
-  },
-  get(chatId: number): string | undefined {
-    const entry = awaitingInputMap.get(chatId);
-    if (!entry) return undefined;
-    if (entry.expiresAt <= Date.now()) {
-      awaitingInputMap.delete(chatId);
-      return undefined;
-    }
-    return entry.action;
-  },
-  delete(chatId: number): void {
-    awaitingInputMap.delete(chatId);
-  },
-};
-
+// Shared awaiting-input state lives in ../awaiting-input. We prefix actions
+// with "settings:" so other handlers' middleware ignores our prompts.
 const BLOCKED_PAGE_SIZE = 8;
 
 function parseBlockedKeywords(raw: string | null): string[] {
@@ -119,9 +89,10 @@ export function registerSettingsHandlers(bot: Bot): void {
         .text(`🌍 Timezone`, "x:tz")
         .text(notifEnabled ? "🔕 Mute" : "🔔 Unmute", "x:notif")
         .row()
-        .text("🔗 Link Code", "x:link")
-        .row()
+        .text("📡 Boards", "b:menu")
         .text("🚫 Blocked Companies", "x:blocked:0")
+        .row()
+        .text("🔗 Link Code", "x:link")
         .row()
         .text("◀️ Back", "m:menu");
 
@@ -299,7 +270,7 @@ export function registerSettingsHandlers(bot: Bot): void {
       const code = generateLinkCode();
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(
-        `<b>🔗 Link Code</b>\n\n<code>${code}</code>\n\nSend this to another user. Expires in 5 minutes.`,
+        `<b>🔗 Link Code</b>\n\n<code>${code}</code>\n\n<i>Tap the code above to copy it.</i>\n\nSend this to another user. Expires in 5 minutes.`,
         {
           parse_mode: "HTML",
           reply_markup: new InlineKeyboard().text("◀️ Settings", "x:menu"),
@@ -375,7 +346,7 @@ export function registerSettingsHandlers(bot: Bot): void {
       await ctx.answerCallbackQuery();
       const chatId = ctx.chat?.id;
       if (!chatId) return;
-      awaitingInput.set(chatId, "blocked_company");
+      awaitingInput.set(chatId, "settings:blocked_company");
 
       const text =
         "<b>🚫 Add Blocked Companies</b>\n\n" +
@@ -423,8 +394,32 @@ export function registerSettingsHandlers(bot: Bot): void {
     }
   });
 
-  // Clear all blocked keywords
+  // Clear all blocked keywords — confirmation step
   bot.callbackQuery("x:bl:clear", async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      const raw = await settingsRepo.getSetting("blockedCompanyKeywords");
+      const keywords = parseBlockedKeywords(raw);
+      if (keywords.length === 0) {
+        await ctx.answerCallbackQuery("Nothing to clear").catch(() => {});
+        return;
+      }
+
+      const keyboard = new InlineKeyboard()
+        .text(`🗑 Yes, clear ${keywords.length}`, "x:bl:clear:do")
+        .text("◀️ Cancel", "x:blocked:0");
+      await ctx.editMessageText(
+        `🗑 <b>Clear all blocked companies?</b>\n\n<i>${keywords.length} keyword(s) will be removed. Cannot be undone.</i>`,
+        { parse_mode: "HTML", reply_markup: keyboard },
+      );
+    } catch (err) {
+      logger.error("Clear blocked confirm error", { error: err instanceof Error ? err.message : String(err) });
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
+    }
+  });
+
+  // Clear all blocked keywords — confirmed
+  bot.callbackQuery("x:bl:clear:do", async (ctx) => {
     try {
       await settingsRepo.setSetting("blockedCompanyKeywords", "[]");
       await ctx.answerCallbackQuery("All blocked companies cleared!");
@@ -444,11 +439,13 @@ export function registerSettingsHandlers(bot: Bot): void {
     if (!chatId) return next();
 
     const action = awaitingInput.get(chatId);
-    if (!action) return next();
+    if (!action || !action.startsWith("settings:")) return next();
     awaitingInput.delete(chatId);
 
+    const subAction = action.slice("settings:".length);
+
     try {
-      if (action === "blocked_company") {
+      if (subAction === "blocked_company") {
         const newKeywords = ctx.message.text
           .split(",")
           .map((t) => t.trim().toLowerCase())
