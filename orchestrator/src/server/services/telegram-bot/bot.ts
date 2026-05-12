@@ -201,7 +201,12 @@ export async function sendMainMenu(ctx: Context): Promise<void> {
     .text("🚀 Auto Apply", "a:status")
     .text("📊 Stats", "s:stats")
     .row()
+    .text("📈 Insights", "i:w:30")
+    .text("🎤 Interview Prep", "ip:menu")
+    .row()
+    .text("📬 Email Sync", "g:status")
     .text("📡 Boards", "b:menu")
+    .row()
     .text("⚙️ Settings", "x:menu");
 
   await ctx.reply(text, {

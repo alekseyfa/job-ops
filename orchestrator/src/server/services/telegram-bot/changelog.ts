@@ -37,6 +37,97 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.0",
+    date: "2026-05-11",
+    items: [
+      {
+        title: "📬 Auto Gmail Sync",
+        description:
+          "Your Gmail inbox is now polled every 2 hours and post-application emails are auto-classified. When an email is a confident match (95%+) the job stage is updated automatically; otherwise the email shows up in the Tracking Inbox.",
+        tip: "Tap 📬 Email Sync in the main menu, or send /sync to trigger a manual run, or /gmail_status to check the scheduler. First-time setup: connect olga.fadeeva.job@gmail.com via Settings → Tracking Inbox in the web app.",
+      },
+      {
+        title: "🔔 Per-email Telegram reports",
+        description:
+          "Every new processed email lands here as a chat message: who sent it, the subject, which job matched, what stage was applied, and the Smart Router's confidence. Spam and irrelevant emails are filtered out so the chat doesn't get noisy.",
+      },
+      {
+        title: "🛡 Reliability guarantees",
+        description:
+          "No duplicate notifications even if the sync re-reads the same email later. If Gmail fails 3 polls in a row you get a single 'reconnect needed' alert instead of a flood. Sync skips itself if a run is already in flight.",
+      },
+      {
+        title: "✉️ Updated resume email",
+        description:
+          "Resumes and cover letters now use olga.fadeeva.job@gmail.com — the dedicated job-search inbox. Any future PDF generation uses the new address automatically.",
+      },
+    ],
+  },
+  {
+    version: "1.7.1",
+    date: "2026-05-10",
+    items: [
+      {
+        title: "🔌 Auto-Enabled Remote Sources",
+        description:
+          "When you pick Selected + Remote or Remote Worldwide as your scope, the pipeline automatically pulls from WeWorkRemotely, Remotive, RemoteOK, Himalayas, JustJoin.it, NoFluffJobs, hh.ru and Working Nomads. No need to enable each one manually.",
+        tip: "Open Pipeline → 🌐 Scope and switch to 'Selected + Remote' or 'Remote Worldwide'. The Review screen now shows the active source list.",
+      },
+    ],
+  },
+  {
+    version: "1.7.0",
+    date: "2026-05-10",
+    items: [
+      {
+        title: "🌐 7 New Job Sources for Remote-First Search",
+        description:
+          "Pipeline now covers WeWorkRemotely, Remotive, RemoteOK, Himalayas, JustJoin.it, NoFluffJobs and HeadHunter (hh.ru). Most are 100% remote, the EU ones surface Polish/Czech companies that hire across Europe, and HH.ru exposes English-speaking remote roles relevant to candidates from the Russian-speaking world.",
+        tip: "Open Settings → Pipeline → Sources to enable any combination. Sources are opt-in, so they won't affect your current run until you switch them on.",
+      },
+      {
+        title: "💼 Better remote-only matching",
+        description:
+          "When your workplace preferences are set to Remote only, these new sources are auto-tuned to ask their APIs for fully-remote postings — fewer irrelevant onsite roles slip through.",
+      },
+    ],
+  },
+  {
+    version: "1.6.0",
+    date: "2026-05-10",
+    items: [
+      {
+        title: "📈 Insights Dashboard",
+        description:
+          "Get a data-driven view of your job-search funnel: pipeline efficiency, response rates by score band, top missing skills, and recommended score thresholds.",
+        tip: "Tap 📈 Insights in the main menu, or send /insights. Switch the time window between 7d / 30d / 90d.",
+      },
+      {
+        title: "🎤 Interview Prep — Story Bank & Question Bank",
+        description:
+          "Build a STAR+R story bank that grows with every application, plus a tagged interview-question bank with confidence ratings. Pull from them before any interview.",
+        tip: "Tap 🎤 Interview Prep in the main menu, or send /interview. ⭐ mark your strongest 5-10 stories as 'master' so you can bend them to any question.",
+      },
+      {
+        title: "🧩 Richer Job Match Analysis",
+        description:
+          "Each scored job now shows requirements you meet, requirements you're missing, transferable skills, deal-breakers, and concrete tailoring tips — not just a single score.",
+        tip: "Open any scored job to see the new 🧩 Match section.",
+      },
+      {
+        title: "👻 Ghost-Job Detector",
+        description:
+          "Listings that look like reposts, expired postings, or vague hype roles are now flagged in your job list and on the job card so you can avoid wasting time on dead ends.",
+        tip: "Look for the 🔴 / 🟡 / 🟢 indicator on jobs. Signals are listed on each job card.",
+      },
+      {
+        title: "🚦 Pre-Queue Liveness Check",
+        description:
+          "Discovered URLs that return a hard 404/410 are dropped before they're added to your pipeline — fewer dead jobs, less noise.",
+      },
+    ],
+  },
+  {
     version: "1.5.0",
     date: "2026-05-07",
     items: [
@@ -162,21 +253,28 @@ export function getChangelogSince(
 /**
  * Format changelog entries into a single HTML message for Telegram.
  */
+function escapeChangelogHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function formatChangelogMessage(entries: ChangelogEntry[]): string {
   if (entries.length === 0) return "";
 
   const latestVersion = entries[0].version;
   const lines: string[] = [
-    `<b>📢 What's New — v${latestVersion}</b>`,
+    `<b>📢 What's New — v${escapeChangelogHtml(latestVersion)}</b>`,
     "",
   ];
 
   for (const entry of entries) {
     for (const item of entry.items) {
-      lines.push(`<b>${item.title}</b>`);
-      lines.push(item.description);
+      lines.push(`<b>${escapeChangelogHtml(item.title)}</b>`);
+      lines.push(escapeChangelogHtml(item.description));
       if (item.tip) {
-        lines.push(`💡 <i>${item.tip}</i>`);
+        lines.push(`💡 <i>${escapeChangelogHtml(item.tip)}</i>`);
       }
       lines.push("");
     }

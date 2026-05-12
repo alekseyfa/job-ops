@@ -4,11 +4,19 @@ import { generateLinkCode } from "./auth";
 import { createBot, getBot } from "./bot";
 import { registerApplyHandlers } from "./handlers/apply";
 import { registerBoardHandlers } from "./handlers/boards";
+import { registerGmailHandlers } from "./handlers/gmail";
+import { registerInsightsHandlers } from "./handlers/insights";
+import { registerInterviewPrepHandlers } from "./handlers/interview-prep";
 import { registerJobHandlers } from "./handlers/jobs";
+import { registerMaintenanceHandlers } from "./handlers/maintenance";
 import { registerPipelineHandlers } from "./handlers/pipeline";
 import { registerSettingsHandlers } from "./handlers/settings";
 import { registerStatsHandlers } from "./handlers/stats";
 import { sendChangelogIfNeeded } from "./changelog-notifications";
+import {
+  startGmailNotificationSubscriptions,
+  stopGmailNotificationSubscriptions,
+} from "./gmail-notifications";
 import {
   startNotificationSubscriptions,
   stopNotificationSubscriptions,
@@ -38,6 +46,10 @@ export async function initializeTelegramBot(): Promise<void> {
     registerStatsHandlers(bot);
     registerSettingsHandlers(bot);
     registerBoardHandlers(bot);
+    registerInsightsHandlers(bot);
+    registerInterviewPrepHandlers(bot);
+    registerGmailHandlers(bot);
+    registerMaintenanceHandlers(bot);
 
     // Start long-polling
     bot.start({
@@ -57,6 +69,7 @@ export async function initializeTelegramBot(): Promise<void> {
 
     // Start proactive notifications
     startNotificationSubscriptions();
+    startGmailNotificationSubscriptions();
   } catch (error) {
     logger.error("Failed to start Telegram bot", {
       error: error instanceof Error ? error.message : String(error),
@@ -68,6 +81,7 @@ export async function stopTelegramBot(): Promise<void> {
   const bot = getBot();
   if (bot && started) {
     stopNotificationSubscriptions();
+    stopGmailNotificationSubscriptions();
     await bot.stop();
     started = false;
     logger.info("Telegram bot stopped");
