@@ -2,7 +2,6 @@ import { logger } from "@infra/logger";
 import * as settingsRepo from "../../repositories/settings";
 import { generateLinkCode } from "./auth";
 import { createBot, getBot } from "./bot";
-import { registerApplyHandlers } from "./handlers/apply";
 import { registerBoardHandlers } from "./handlers/boards";
 import { registerGmailHandlers } from "./handlers/gmail";
 import { registerInsightsHandlers } from "./handlers/insights";
@@ -42,7 +41,6 @@ export async function initializeTelegramBot(): Promise<void> {
     // Register all handlers
     registerPipelineHandlers(bot);
     registerJobHandlers(bot);
-    registerApplyHandlers(bot);
     registerStatsHandlers(bot);
     registerSettingsHandlers(bot);
     registerBoardHandlers(bot);

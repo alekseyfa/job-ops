@@ -231,13 +231,10 @@ async function fetchPostings(args: {
     url.searchParams.set("criteria", "remote=true");
   }
 
+  // NoFluffJobs' public posting API expects GET; POST returns 405.
   const response = await args.fetchImpl(url.toString(), {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({}),
+    method: "GET",
+    headers: { accept: "application/json" },
   });
   if (!response.ok) {
     throw new Error(`NoFluffJobs request failed with ${response.status}`);

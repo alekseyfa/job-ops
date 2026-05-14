@@ -31,7 +31,13 @@ export const REMOTE_FRIENDLY_SOURCES: ExtractorSourceId[] = [
   "himalayas",
   "justjoinit",
   "nofluffjobs",
-  "hhru",
+  // NOTE: hh.ru aggressively geo-blocks API requests originating outside
+  // CIS IP ranges (any User-Agent rewrite is ineffective).  Keep the
+  // extractor wired for users on CIS networks, but don't auto-enable it
+  // here so EU/US users don't waste polling cycles on guaranteed-forbidden
+  // responses.  To re-enable manually: add "hhru" to the pipeline sources
+  // setting from the Settings UI.
+  // "hhru",
 ];
 
 /**

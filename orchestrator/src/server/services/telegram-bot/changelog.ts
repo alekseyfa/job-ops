@@ -37,6 +37,60 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.10.0",
+    date: "2026-05-14",
+    items: [
+      {
+        title: "🌍 Multi-Country JobSpy",
+        description:
+          "Indeed and LinkedIn searches now run across 6 countries in parallel: Germany, UAE (Dubai), Cyprus, Israel, Netherlands and Switzerland. This unlocks remote roles from Russian-speaking IT hubs (Cyprus, Israel) and high-salary EU markets (NL, CH) — all hits feed into the same pipeline as global remote.",
+      },
+      {
+        title: "🔧 NoFluffJobs Reconnected",
+        description:
+          "Their public API switched from POST to GET — we returned 0 jobs for a while. Fixed. Expect ~20,000 PM/tech postings from EU again, with a remote filter applied at the source.",
+      },
+      {
+        title: "⚠️ HH.ru Disabled",
+        description:
+          "HeadHunter.ru aggressively geo-blocks API requests outside CIS IP ranges, so it's been silently returning 'forbidden' from our Munich server. Removed from the active remote rotation to stop wasting cycles. Code is still in place — works automatically if you ever run the pipeline from a CIS IP.",
+        tip: "For CIS coverage from EU, Djinni.co is a strong public-API alternative. Ping me to add it as a new source if needed.",
+      },
+    ],
+  },
+  {
+    version: "1.9.0",
+    date: "2026-05-12",
+    items: [
+      {
+        title: "🔍 Much Wider Search",
+        description:
+          "Per-source result caps raised from 4 → 50 per search term. Indeed, LinkedIn, Glassdoor, Adzuna, startup.jobs and Seek now each pull up to 50 jobs per keyword — that's roughly a 10–15× increase in raw coverage every pipeline run.",
+      },
+      {
+        title: "🏢 31 New ATS Companies Added",
+        description:
+          "Tracking expanded to 35 company career boards including GitLab, Anthropic, OpenAI, Stripe, Figma, Notion, Doist, Automattic, Vercel, Linear, Coinbase, Mozilla, Hugging Face and 18 more. These surface exclusive listings that don't appear on LinkedIn or Indeed.",
+      },
+      {
+        title: "🌐 Remote-First Scope",
+        description:
+          "Location pin removed (was Munich) and workplace types narrowed to remote + hybrid. The pipeline now scans worldwide for remote roles instead of being anchored to one city.",
+      },
+      {
+        title: "🧹 Low-fit Auto-skip",
+        description:
+          "Jobs scoring below 40/100 are automatically moved to the 'skipped' bucket so the Ready list stays clean. Below 55 they don't even get a tailored PDF generated. You'll only see jobs the system thinks are worth your time.",
+        tip: "Use /insights to monitor how many jobs were auto-skipped per week. If too few real matches survive, ping me to lower the threshold.",
+      },
+      {
+        title: "📈 Higher Throughput",
+        description:
+          "Pipeline now processes the top 20 ranked jobs per run (up from 10), keeping pace with the higher inflow without falling behind.",
+      },
+    ],
+  },
+  {
     version: "1.8.0",
     date: "2026-05-11",
     items: [

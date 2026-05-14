@@ -12,8 +12,71 @@ import type { CreateJobInput } from "@shared/types/jobs";
 import { createRateLimitedFetch } from "@shared/utils/rate-limited-fetch";
 
 const HH_API_URL = "https://api.hh.ru/vacancies";
-const HH_USER_AGENT = "JobOps/1.0 (+https://github.com/dakheera47/job-ops)";
+// HH.ru blocks requests whose User-Agent lacks an identifiable contact.
+// Their guidelines require either an email or a registered app token.
+// See: https://github.com/hhru/api/blob/master/docs/general.md
+const HH_USER_AGENT =
+  process.env.HHRU_USER_AGENT?.trim() ||
+  "JobOps/1.0 (olga.fadeeva.job@gmail.com)";
 const DEFAULT_MAX_PER_TERM = 50;
+
+/**
+ * English → Russian translations for the most common Program/Project Manager
+ * terms.  HH.ru's corpus is ~95% Russian so an English-only query returns
+ * almost nothing.  When the user's search term matches a key in this map we
+ * also issue the Russian variant on the side and merge the results.
+ *
+ * Keys are stored lower-cased; lookup is case-insensitive.
+ */
+const RUSSIAN_TERM_EXPANSIONS: Record<string, string[]> = {
+  "program manager": ["Менеджер программ", "Руководитель программ"],
+  "senior program manager": [
+    "Старший менеджер программ",
+    "Ведущий менеджер программ",
+  ],
+  "technical program manager": [
+    "Технический менеджер программ",
+    "Руководитель технических программ",
+  ],
+  "principal program manager": ["Главный менеджер программ"],
+  "staff program manager": ["Главный менеджер программ"],
+  "lead program manager": ["Руководитель программ", "Ведущий менеджер программ"],
+  "program management": ["Управление программами", "Менеджмент программ"],
+  "it program manager": ["IT менеджер программ", "ИТ менеджер программ"],
+  "engineering program manager": [
+    "Менеджер инженерных программ",
+    "Руководитель инженерных программ",
+  ],
+  "program director": ["Директор программ", "Программный директор"],
+  "project manager": ["Менеджер проектов", "Руководитель проектов"],
+  "senior project manager": ["Старший менеджер проектов"],
+  "product manager": ["Менеджер продукта", "Продакт-менеджер"],
+};
+
+function expandSearchTerms(input: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of input) {
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(trimmed);
+    }
+    const expansions = RUSSIAN_TERM_EXPANSIONS[key];
+    if (expansions) {
+      for (const ru of expansions) {
+        const ruKey = ru.toLowerCase();
+        if (!seen.has(ruKey)) {
+          seen.add(ruKey);
+          out.push(ru);
+        }
+      }
+    }
+  }
+  return out;
+}
 
 export type HhWorkplaceType = "remote" | "hybrid" | "onsite";
 
@@ -251,17 +314,24 @@ export async function runHhRu(
   }
 
   const fetchImpl = options.fetchImpl ?? createRateLimitedFetch("hhru");
-  const searchTerms =
+  const rawTerms =
     options.searchTerms && options.searchTerms.length > 0
       ? options.searchTerms
       : ["software engineer"];
+  // Expand each English PM term with its common Russian-language variants so
+  // we actually surface postings on HH.ru's primarily Russian corpus.
+  const searchTerms = expandSearchTerms(rawTerms);
   const maxJobsPerTerm = Math.max(
     1,
     Math.min(100, options.maxJobsPerTerm ?? DEFAULT_MAX_PER_TERM),
   );
-  const remoteOnly =
-    options.workplaceTypes?.length === 1 &&
-    options.workplaceTypes[0] === "remote";
+  // Apply the remote-schedule filter whenever the user is open to remote work,
+  // not only when they want it exclusively.  This narrows the result set to
+  // remote vacancies even in mixed remote+hybrid setups, which is the user's
+  // typical preference.
+  const remoteOnly = options.workplaceTypes
+    ? options.workplaceTypes.includes("remote")
+    : false;
 
   try {
     const jobs: CreateJobInput[] = [];
