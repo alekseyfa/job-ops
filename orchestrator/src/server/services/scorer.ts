@@ -5,11 +5,18 @@
 import { logger } from "@infra/logger";
 import { getDefaultPromptTemplate } from "@shared/prompt-template-definitions.js";
 import type { Job, JobMatchAnalysis } from "@shared/types";
+import {
+  classifyLlmError,
+  LlmNotConfiguredError,
+  LlmTransientError,
+} from "./llm-errors";
 import type { JsonSchemaDefinition } from "./llm/types";
 import { stripMarkdownCodeFences } from "./llm/utils/json";
 import { createConfiguredLlmService, resolveLlmModel } from "./modelSelection";
 import { renderPromptTemplate } from "./prompt-templates";
 import { getEffectiveSettings } from "./settings";
+
+export { LlmNotConfiguredError, LlmTransientError };
 
 interface SuitabilityResult {
   score: number; // 0-100
@@ -265,30 +272,40 @@ export async function scoreJobSuitability(
   });
 
   if (!result.success) {
-    if (result.error.toLowerCase().includes("api key")) {
-      logger.warn("LLM API key not set, using mock scoring", { jobId: job.id });
+    const kind = classifyLlmError(result.error);
+    if (kind === "config") {
+      logger.warn("Scoring failed (config class) — pausing pipeline", {
+        jobId: job.id,
+        error: result.error,
+      });
+      throw new LlmNotConfiguredError(
+        `AI scoring failed: ${result.error}. Check your LLM configuration in Settings → Integrations, then resume scoring.`,
+      );
     }
-    logger.error("Scoring failed, using mock scoring", {
+    // Transient: per-job failure. Caller (score-jobs step) decides whether
+    // to skip this job or, if too many fail, escalate to a pipeline pause.
+    logger.warn("Scoring failed (transient) — caller decides", {
       jobId: job.id,
       error: result.error,
     });
-    return mockScore(job, {
-      penalizeMissingSalary: settings.penalizeMissingSalary.value,
-      missingSalaryPenalty: settings.missingSalaryPenalty.value,
-    });
+    throw new LlmTransientError(
+      `AI temporarily unavailable: ${result.error}`,
+      result.error,
+    );
   }
 
   const { score, reason } = result.data;
 
-  // Validate we got a reasonable response
+  // Validate we got a reasonable response — invalid score is treated as a
+  // transient parse failure (the API responded but the payload was junk).
   if (typeof score !== "number" || Number.isNaN(score)) {
-    logger.error("Invalid score in AI response, using mock scoring", {
+    logger.warn("Invalid score in AI response — treating as transient", {
       jobId: job.id,
     });
-    return mockScore(job, {
-      penalizeMissingSalary: settings.penalizeMissingSalary.value,
-      missingSalaryPenalty: settings.missingSalaryPenalty.value,
-    });
+    throw new LlmTransientError(
+      "AI returned an invalid score",
+      "invalid_score_payload",
+    );
   }
 
   const clampedScore = Math.min(100, Math.max(0, Math.round(score)));
@@ -408,6 +425,28 @@ export function parseJsonFromContent(
   throw new Error("Unable to parse JSON from model response");
 }
 
+// Hard cap on job description length we pass to the LLM. Anything past 8 KB
+// is almost always boilerplate ("About our company", "Equal opportunity
+// statement", "Benefits", multilingual repeats) — keeping the cap saves
+// 5-15% input tokens on a typical run and ~50% on long wall-of-text postings
+// (max in the corpus was 19 KB). Truncation happens at a word boundary
+// followed by an explicit "... [description truncated]" marker so the LLM
+// knows the cut-off was deliberate.
+const JOB_DESCRIPTION_MAX_CHARS = 8000;
+const TRUNCATION_MARKER = "\n\n... [description truncated]";
+
+function truncateJobDescription(raw: string | null | undefined): string {
+  if (!raw) return "No description available";
+  if (raw.length <= JOB_DESCRIPTION_MAX_CHARS) return raw;
+  const head = raw.slice(0, JOB_DESCRIPTION_MAX_CHARS);
+  const lastBoundary = head.lastIndexOf(" ");
+  const safeHead =
+    lastBoundary > JOB_DESCRIPTION_MAX_CHARS * 0.9
+      ? head.slice(0, lastBoundary)
+      : head;
+  return `${safeHead}${TRUNCATION_MARKER}`;
+}
+
 function buildScoringPrompt(
   job: Job,
   profile: Record<string, unknown>,
@@ -421,7 +460,7 @@ function buildScoringPrompt(
     salary: job.salary || "Not specified",
     degreeRequired: job.degreeRequired || "Not specified",
     disciplines: job.disciplines || "Not specified",
-    jobDescription: job.jobDescription || "No description available",
+    jobDescription: truncateJobDescription(job.jobDescription),
     scoringInstructionsText: preferences.instructions
       ? preferences.instructions
       : "No additional custom scoring instructions.",
@@ -457,59 +496,6 @@ function sanitizeProfileForPrompt(
     experience: experienceItems,
     projects: projectItems,
     education: p.sections?.education?.items ?? [],
-  };
-}
-
-async function mockScore(
-  job: Job,
-  settings: { penalizeMissingSalary: boolean; missingSalaryPenalty: number },
-): Promise<SuitabilityResult> {
-  // Simple keyword-based scoring as fallback
-  const jd = (job.jobDescription || "").toLowerCase();
-  const title = job.title.toLowerCase();
-
-  const goodKeywords = [
-    "typescript",
-    "react",
-    "node",
-    "python",
-    "web",
-    "frontend",
-    "backend",
-    "fullstack",
-    "software",
-    "engineer",
-    "developer",
-  ];
-  const badKeywords = [
-    "senior",
-    "5+ years",
-    "10+ years",
-    "principal",
-    "staff",
-    "manager",
-  ];
-
-  let score = 50;
-
-  for (const kw of goodKeywords) {
-    if (jd.includes(kw) || title.includes(kw)) score += 5;
-  }
-
-  for (const kw of badKeywords) {
-    if (jd.includes(kw) || title.includes(kw)) score -= 10;
-  }
-
-  score = Math.min(100, Math.max(0, score));
-
-  const baseReason = "Scored using keyword matching (API key not configured)";
-
-  // Apply salary penalty if enabled
-  const penaltyResult = applySalaryPenalty(job, score, baseReason, settings);
-
-  return {
-    score: penaltyResult.score,
-    reason: penaltyResult.reason,
   };
 }
 

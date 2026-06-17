@@ -37,6 +37,154 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.17.0",
+    date: "2026-05-19",
+    items: [
+      {
+        title: "🔎 Transparent run summary — see where every job went",
+        description:
+          "After each pipeline run the bot now shows the full funnel: searched → imported → relocation-skipped → wrong-domain-skipped → language-skipped → no-keyword-overlap-skipped → scored → ready. If an unexpected job slips into your queue, the breakdown tells you which filter let it through.",
+      },
+      {
+        title: "🏠 Hybrid roles outside Munich are now skipped",
+        description:
+          "Some job boards mark hybrid roles as \"remote\". A hybrid posting in Berlin or San Francisco still needs you on-site some days, so it's now treated as relocation and auto-skipped. Munich hybrid roles are still kept.",
+      },
+      {
+        title: "⏸️ Smarter pause when the AI is having a bad day",
+        description:
+          "A single AI hiccup no longer kills the whole run. One failing job is skipped (will retry on the next run) and the pipeline keeps going. Only if more than 30% of jobs fail does the bot pause and ask you what to do.",
+        tip: "When the bot pauses, you get two buttons: \"▶️ Resume\" to retry now, or \"❌ Cancel run\" to stop and keep everything scored so far.",
+      },
+      {
+        title: "⚠️ Loud warning if your resume can't be read",
+        description:
+          "If the design resume fails to load, the screening that protects you from off-topic jobs (language gate, keyword overlap) is silently disabled. The bot now flags this clearly in the run summary so you know to re-upload your resume.",
+      },
+    ],
+  },
+  {
+    version: "1.16.0",
+    date: "2026-05-16",
+    items: [
+      {
+        title: "🏢 ATS direct pulls — 40 remote-first companies, 4700+ jobs",
+        description:
+          "Jobs from Greenhouse, Ashby, and Lever boards (GitLab, MongoDB, OpenAI, Stripe, Datadog, Cloudflare, Airbnb, Replit, Spotify, Supabase, Linear, Attio, Warp, …) are now pulled directly from the companies' career APIs every pipeline run. Previously these boards were configured but never enabled in the remote scope.",
+        tip: "The same dashboard's 'companies' setting drives this list — add or remove a slug there to tune the source.",
+      },
+      {
+        title: "🔍 Remote detection in ATS data",
+        description:
+          "Each ATS extractor now reads the location field and the first ~800 characters of the description to decide whether a role is genuinely remote. A San-Francisco posting that merely mentions \"remote-friendly perks\" no longer slips through as remote — only roles with explicit \"Remote\" / \"Anywhere\" / \"Distributed\" / \"Worldwide\" in the location.",
+      },
+      {
+        title: "🧹 Auto-cleanup of stale board slugs",
+        description:
+          "Companies move between ATS providers and slugs go stale. We pruned 45 dead entries (404s) in one shot — every remaining slug was probed live and returns real jobs.",
+      },
+    ],
+  },
+  {
+    version: "1.15.0",
+    date: "2026-05-16",
+    items: [
+      {
+        title: "⚡ 4-5× faster pipeline runs",
+        description:
+          "Last run took 2h 33m — almost all of it spent in sequential country-by-country LinkedIn/Indeed scraping. Now those 9 countries run 3 at a time in parallel, scoring concurrency doubled (4 → 8), discovery extractors doubled (3 → 6), and JobSpy's per-term cap dropped from 50 → 25 (LinkedIn returns the most-relevant first anyway). Expected new runtime: ~30-45 minutes for the same coverage.",
+      },
+      {
+        title: "🌐 Language requirement filter",
+        description:
+          "If a job hard-requires a language not in your resume's Languages section (\"Fluent in Polish\", \"Native German speaker\", \"Must speak French\"), it gets auto-skipped. Soft mentions like \"knowledge of Polish is a plus\" still pass. Resume is the source of truth — add or remove a language there to update the filter.",
+        tip: "Already applied to your current queue (9 German-required jobs auto-skipped).",
+      },
+      {
+        title: "🎯 Mix of AI models",
+        description:
+          "Job scoring and project selection switched to Claude Haiku 4.5 — same quality on simple classification tasks, ~70% cheaper and 2-3× faster. Resume tailoring (the part employers actually read) upgraded to Claude Opus 4.6 for sharper headlines and ATS keyword density. Net effect: comparable cost per run, better tailoring quality.",
+      },
+    ],
+  },
+  {
+    version: "1.14.0",
+    date: "2026-05-16",
+    items: [
+      {
+        title: "📰 New source: HN \"Who is hiring?\"",
+        description:
+          "Each month's Hacker News hiring thread is now pulled automatically via the Algolia HN API and parsed into structured jobs. Only remote roles are kept; intern-only and \"SEEKING FREELANCER\" posts are auto-dropped. Expect ~150–300 extra remote leads per month from this source alone.",
+      },
+      {
+        title: "💸 Cost guardrails",
+        description:
+          "New setting `pipelineMaxJobsToScore` (default 2000) caps how many jobs go through the AI scorer per run — newer jobs win, the rest move to the next run. Also: long job descriptions are now truncated to 8000 characters before being sent to the AI (everything past that is usually boilerplate). Together this keeps a single run under ~$35 even with the largest expected queue.",
+        tip: "If you ever see fewer jobs scored than discovered, that means the cap kicked in. Raise `pipelineMaxJobsToScore` in Settings to score more in one go.",
+      },
+    ],
+  },
+  {
+    version: "1.13.0",
+    date: "2026-05-16",
+    items: [
+      {
+        title: "🧹 Smarter pre-screening — less noise in your job queue",
+        description:
+          "Before the AI scores any job, two new gates run: (1) titles that clearly belong to mismatched careers (medical, payroll, field sales, ERP consulting, legal, retail, recruiting, …) are auto-skipped, and (2) jobs whose title and description share zero keywords with your resume are skipped too. You'll see less off-topic clutter and the AI spends its budget on real candidates.",
+        tip: "Already applied to your current queue. The resume itself is the source of truth — edit it and the filter automatically adapts.",
+      },
+      {
+        title: "🔎 Wider match on remote-only boards",
+        description:
+          "Himalayas, RemoteOK, Remotive, We Work Remotely and Working Nomads now ignore rank prefixes (Senior, Junior, Lead, Staff, Principal) when checking your search terms against listings. A search for \"Senior Program Manager\" now also matches \"Program Manager II\" or \"Lead Program Manager\". The cap per term tripled from 50 → 150 since these boards return everything in one HTTP call anyway.",
+      },
+    ],
+  },
+  {
+    version: "1.12.0",
+    date: "2026-05-16",
+    items: [
+      {
+        title: "🌐 More remote jobs — US, UK, Canada added",
+        description:
+          "LinkedIn and Indeed now also search across the US, UK and Canada in addition to Germany, UAE, Cyprus, Israel, Netherlands and Switzerland. This unlocks a much larger pool of global-remote vacancies that you previously couldn't see.",
+      },
+      {
+        title: "🎯 Smarter search keywords",
+        description:
+          "Expanded the job-title list from 10 to 35 by mining your resume: now we also search for Security/Compliance/GRC Program Manager, Functional Safety, Open Source Program Manager (OSPO), Engineering Operations, Release Manager, Technical Project Manager, Developer Relations and more. Niche roles where your background is a strong fit.",
+      },
+      {
+        title: "🚫 Stricter relocation filter",
+        description:
+          "Vacancies with just a country label (\"United States\", \"Canada\") and no explicit remote flag are now auto-skipped — these are usually on-site postings at company HQ. You'll see less noise while keeping every truly global-remote role.",
+      },
+    ],
+  },
+  {
+    version: "1.11.0",
+    date: "2026-05-14",
+    items: [
+      {
+        title: "🚀 Smart Apply (Greenhouse + Ashby)",
+        description:
+          "On any 'ready' job from Greenhouse or Ashby, tap 🚀 Smart Apply. The server opens the application form in a real Firefox session, pre-fills your name, email, phone, location, uploads the tailored resume PDF, and gives you a mobile-friendly browser link. You review every screening question yourself — we never click Submit for you.",
+        tip: "Open any ready Greenhouse or Ashby job → tap 🚀 Smart Apply → wait ~20 sec → tap the link → review fields → tap Submit. Job is auto-moved to 'applied' once the success page appears.",
+      },
+      {
+        title: "🛡 Safety guardrails",
+        description:
+          "Smart Apply skips any form with a captcha. Free-text screening questions are left blank with a note (no LLM-drafted answers are shipped without your review). Browser sessions auto-expire after 15 minutes. Only one session can be open at a time per server.",
+      },
+      {
+        title: "📄 Resume filename fix",
+        description:
+          "PDF and cover-letter filenames now use the name from your design resume (the source of truth) instead of your Telegram display name. So your applications are named correctly regardless of how Telegram shows you.",
+      },
+    ],
+  },
+  {
     version: "1.10.0",
     date: "2026-05-14",
     items: [
