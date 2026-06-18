@@ -431,7 +431,11 @@ export async function runPipeline(
         });
       }
       ensureNotCancelled(tenantId);
-      const { created, skipped: dedupSkipped } = await importJobsStep({
+      const {
+        created,
+        skipped: dedupSkipped,
+        crossPostingDeduplicated,
+      } = await importJobsStep({
         discoveredJobs: liveJobs,
       });
       jobsDiscovered = created;
@@ -440,6 +444,10 @@ export async function runPipeline(
         stage: "import",
         jobsLivenessFiltered: preImportFiltered,
         jobsDeduplicated: dedupSkipped,
+        filterMetrics: {
+          ...(resultSummary.filterMetrics ?? {}),
+          crossPostingDeduplicated,
+        },
       });
       await pipelineRepo.updatePipelineRun(pipelineRun.id, {
         jobsDiscovered: created,
