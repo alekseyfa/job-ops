@@ -164,7 +164,7 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 - Initialized at startup from `orchestrator/src/server/index.ts` via `initializeStaleJobsCleanup()`. Look for "Stale job cleanup scheduler started" in the logs to verify it's running after restart.
 
 ### Pipeline Step Ordering
-- Order: `discoverJobs` → `preImportLiveness` → `importJobs` → `filterRelocation` → `filterAntiDomain` → `checkLiveness` → `scoreJobs` (LLM, with per-job transient-failure skip + ≥30% failure-rate pause) → `selectJobs` → `processJobs`.
+- Order: `discoverJobs` → `preImportLiveness` → `importJobs` → `filterRelocation` → `filterAntiDomain` → `filterGhostJobs` → `checkLiveness` → `scoreJobs` (LLM, with per-job transient-failure skip + ≥30% failure-rate pause) → `selectJobs` → `processJobs`.
 - Auto-skip-below-threshold runs **inside** `scoreJobsStep` (single source of truth, reading `autoSkipScoreThreshold` with `pipelineAutoSkipBelow` as a legacy fallback). Do not add a second pass in `orchestrator.ts` — that was the May 2026 double-apply bug.
 - Registered in `orchestrator/src/server/pipeline/steps/index.ts`; invoked in `orchestrator/src/server/pipeline/orchestrator.ts`.
 - **Step dependency map** — useful when you're about to delete or refactor a file:
@@ -177,6 +177,8 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
   filterAntiDomain    ← jobsRepo.{getUnscoredDiscoveredJobs, markJobsSkippedWithReason}
                         + services/job-screening.ts + services/resume-keywords-loader.ts
                         ← repositories/design-resume.ts
+  filterGhostJobs     ← jobsRepo.{getUnscoredDiscoveredJobs, markJobsSkippedWithReason}
+                        + services/ghost-job-detector.ts (assessJobLegitimacy, "red" tier)
   checkLiveness       ← HTTP HEAD + jobsRepo.markExpired
   scoreJobs           ← services/scorer.ts (LLM) + services/llm-errors.ts
                         + visa-sponsors + ghost-job-detector

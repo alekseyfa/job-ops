@@ -42,6 +42,7 @@ describe("pipeline step ordering", () => {
     "importJobsStep",
     "filterRelocationJobsStep",
     "filterAntiDomainJobsStep",
+    "filterGhostJobsStep",
     "checkLivenessStep",
     "scoreJobsStep",
     "selectJobsStep",
@@ -94,6 +95,9 @@ describe("pipeline step ordering", () => {
     );
     expect(stepsIndexSource).toContain(
       'export { filterAntiDomainJobsStep } from "./filter-anti-domain"',
+    );
+    expect(stepsIndexSource).toContain(
+      'export { filterGhostJobsStep } from "./filter-ghost-jobs"',
     );
   });
 });

@@ -50,6 +50,7 @@ import {
   checkLivenessStep,
   discoverJobsStep,
   filterAntiDomainJobsStep,
+  filterGhostJobsStep,
   filterRelocationJobsStep,
   importJobsStep,
   loadProfileStep,
@@ -503,6 +504,21 @@ export async function runPipeline(
           screeningDegradationReason,
         },
       });
+
+      ensureNotCancelled(tenantId);
+      const { markedCount: ghostRedSkipped } = await filterGhostJobsStep();
+      if (ghostRedSkipped > 0) {
+        pipelineLogger.info("Ghost-job filter skipped likely dead postings", {
+          skipped: ghostRedSkipped,
+        });
+        await persistResultSummary({
+          stage: "import",
+          filterMetrics: {
+            ...(resultSummary.filterMetrics ?? {}),
+            ghostRedSkipped,
+          },
+        });
+      }
 
       ensureNotCancelled(tenantId);
       await persistResultSummary({ stage: "liveness" });
