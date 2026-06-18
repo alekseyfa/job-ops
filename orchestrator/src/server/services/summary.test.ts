@@ -290,6 +290,24 @@ describe("generateTailoring", () => {
       expect(prompt).toContain("Priority JD keywords to surface where I genuinely have them: \n");
     });
 
+    it("omits the experience instruction unless includeExperience is set", async () => {
+      await generateTailoring("Build APIs", profile);
+      const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+      expect(prompt).not.toContain("EXPERIENCE TAILORING");
+    });
+
+    it("appends the rephrase-only experience instruction when includeExperience is set", async () => {
+      await generateTailoring("Build APIs", profile, null, {
+        includeExperience: true,
+      });
+      const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+      expect(prompt).toContain("EXPERIENCE TAILORING");
+      expect(prompt).toContain("NEVER invent");
+      // Schema must now require an experience array.
+      const schema = callJsonMock.mock.calls.at(-1)?.[0]?.jsonSchema;
+      expect(schema?.schema?.required).toContain("experience");
+    });
+
     it("injects priority keywords, missing skills, and tips from matchAnalysis", async () => {
       await generateTailoring("Senior Backend Engineer with Python", profile, {
         requirements: { met: [], missing: [], partial: [] },

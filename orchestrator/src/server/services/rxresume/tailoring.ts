@@ -4,6 +4,7 @@ import { normalizeTextForATS } from "@shared/utils/normalize-ats-text.js";
 import { stripHtmlTags } from "@shared/utils/string";
 import {
   filterInjectedKeywords,
+  isSupported,
   type ProvenanceIndex,
 } from "../tailoring-provenance";
 
@@ -19,6 +20,7 @@ export type TailorChunkInput = {
   headline?: string | null;
   summary?: string | null;
   skills?: TailoredSkillsInput;
+  experience?: TailoredExperienceEntryInput[] | null;
 };
 
 export type ResumeProjectSelectionItem = ResumeProjectCatalogItem & {
@@ -186,6 +188,101 @@ export function applyTailoredSkills(
   });
 }
 
+export interface TailoredExperienceEntryInput {
+  company: string;
+  position: string;
+  bullets: string[];
+}
+
+export interface TailoredExperienceDiffEntry {
+  company: string;
+  position: string;
+  before: string;
+  after: string;
+}
+
+function normalizeMatchKey(value: unknown): string {
+  return typeof value === "string"
+    ? value.toLowerCase().replace(/\s+/g, " ").trim()
+    : "";
+}
+
+function bulletsToHtml(bullets: string[]): string {
+  const items = bullets
+    .map((b) => normalizeTextForATS(b).trim())
+    .filter((b) => b.length > 0)
+    .map((b) => `<li><p>${b}</p></li>`)
+    .join("");
+  return items ? `<ul>${items}</ul>` : "";
+}
+
+/**
+ * Apply provenance-safe tailored experience bullets onto the resume's
+ * experience section (WS1-T3). Each tailored entry is matched to an existing
+ * experience item by company + position (case/space-insensitive); its bullets
+ * are rebuilt as an HTML <ul> from ONLY the words the base resume supports —
+ * any bullet that introduces an unsupported token is reverted to the original.
+ * Both renderers read sections.experience.items[].description, so writing here
+ * covers the rxresume and LaTeX paths. Returns a before/after diff for audit.
+ *
+ * Fails closed: the provenanceIndex is mandatory (no compat bypass) so a
+ * missing index can never let a fabricated bullet through.
+ */
+export function applyTailoredExperience(
+  resumeData: RecordLike,
+  tailoredExperience: TailoredExperienceEntryInput[] | null | undefined,
+  provenanceIndex: ProvenanceIndex,
+): TailoredExperienceDiffEntry[] {
+  if (!tailoredExperience || tailoredExperience.length === 0) return [];
+
+  const sections = asRecord(resumeData.sections);
+  const experienceSection = asRecord(sections?.experience);
+  const items = asArray(experienceSection?.items);
+  if (!experienceSection || !items) return [];
+
+  const diffs: TailoredExperienceDiffEntry[] = [];
+
+  for (const rawItem of items) {
+    const item = asRecord(rawItem);
+    if (!item) continue;
+    const match = tailoredExperience.find(
+      (t) =>
+        normalizeMatchKey(t.company) === normalizeMatchKey(item.company) &&
+        normalizeMatchKey(t.position) === normalizeMatchKey(item.position),
+    );
+    if (!match) continue;
+
+    // Token-level provenance guard: a tailored bullet may only use words the
+    // base resume already contains. Reject any bullet that introduces an
+    // unsupported alphabetic token (numbers/punctuation are ignored) and keep
+    // the original instead — this is the no-fabrication contract in code.
+    const safeBullets = match.bullets.filter((bullet) => {
+      const tokens = bullet
+        .toLowerCase()
+        .replace(/[^a-z0-9+#./\s-]/g, " ")
+        .split(/\s+/)
+        .filter((t) => /[a-z]/.test(t) && t.length >= 3);
+      return tokens.every((t) => isSupported(t, provenanceIndex));
+    });
+
+    if (safeBullets.length === 0) continue;
+
+    const before = typeof item.description === "string" ? item.description : "";
+    const after = bulletsToHtml(safeBullets);
+    if (!after || after === before) continue;
+
+    item.description = after;
+    diffs.push({
+      company: typeof item.company === "string" ? item.company : "",
+      position: typeof item.position === "string" ? item.position : "",
+      before: stripHtmlTags(before),
+      after: stripHtmlTags(after),
+    });
+  }
+
+  return diffs;
+}
+
 export function extractProjectsFromResume(resumeData: RecordLike): {
   catalog: ResumeProjectCatalogItem[];
   selectionItems: ResumeProjectSelectionItem[];
@@ -280,6 +377,16 @@ export function applyTailoredChunks(args: {
   applyTailoredSkills(args.resumeData, normalized.skills, args.provenanceIndex);
   applyTailoredSummary(args.resumeData, normalized.summary);
   applyTailoredHeadline(args.resumeData, normalized.headline);
+
+  // WS1-T3: experience-bullet tailoring requires the provenance index (fails
+  // closed — no index means we never touch experience).
+  if (args.tailoredContent.experience && args.provenanceIndex) {
+    applyTailoredExperience(
+      args.resumeData,
+      args.tailoredContent.experience,
+      args.provenanceIndex,
+    );
+  }
 }
 
 function normalizeSkillsForATS(

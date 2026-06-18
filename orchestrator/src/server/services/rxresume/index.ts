@@ -20,6 +20,7 @@ import {
   applyTailoredChunks,
   cloneResumeData,
   extractProjectsFromResume as extractProjectsFromResumeV5,
+  type TailoredExperienceEntryInput,
   type TailoredSkillsInput,
 } from "./tailoring";
 import * as v5 from "./v5";
@@ -383,6 +384,7 @@ export async function prepareTailoredResumeForPdf(args: {
     summary?: string | null;
     headline?: string | null;
     skills?: TailoredSkillsInput;
+    experience?: TailoredExperienceEntryInput[] | null;
   };
   jobDescription: string;
   selectedProjectIds?: string | null;

@@ -26,6 +26,7 @@ import type {
 import { getDataDir } from "../config/dataDir";
 import * as jobsRepo from "../repositories/jobs";
 import * as pipelineRepo from "../repositories/pipeline";
+import { settingsRegistry } from "@shared/settings-registry";
 import * as settingsRepo from "../repositories/settings";
 import { generatePdf } from "../services/pdf";
 import { getProfile } from "../services/profile";
@@ -787,18 +788,29 @@ export async function summarizeJob(
       let tailoredSummary = job.tailoredSummary;
       let tailoredHeadline = job.tailoredHeadline;
       let tailoredSkills = job.tailoredSkills;
+      let tailoredExperience = job.tailoredExperience;
 
       if (!tailoredSummary || !tailoredHeadline || options?.force) {
         jobLogger.info("Generating tailoring content");
+        // WS1-T3: experience-bullet tailoring is opt-in and provenance-gated.
+        const includeExperience =
+          settingsRegistry.tailorExperienceBullets.parse(
+            (await settingsRepo.getSetting("tailorExperienceBullets")) ??
+              undefined,
+          ) === true;
         const tailoringResult = await generateTailoring(
           job.jobDescription || "",
           profile,
           job.matchAnalysis,
+          { includeExperience },
         );
         if (tailoringResult.success && tailoringResult.data) {
           tailoredSummary = tailoringResult.data.summary;
           tailoredHeadline = tailoringResult.data.headline;
           tailoredSkills = JSON.stringify(tailoringResult.data.skills);
+          tailoredExperience = tailoringResult.data.experience
+            ? JSON.stringify(tailoringResult.data.experience)
+            : tailoredExperience;
         } else if (options?.force || !tailoredSummary || !tailoredHeadline) {
           return {
             success: false,
@@ -851,6 +863,7 @@ export async function summarizeJob(
         tailoredSummary: tailoredSummary ?? undefined,
         tailoredHeadline: tailoredHeadline ?? undefined,
         tailoredSkills: tailoredSkills ?? undefined,
+        tailoredExperience: tailoredExperience ?? undefined,
         selectedProjectIds: selectedProjectIds ?? undefined,
       });
 
@@ -898,6 +911,9 @@ export async function generateFinalPdf(
           summary: job.tailoredSummary || "",
           headline: job.tailoredHeadline || "",
           skills: job.tailoredSkills ? JSON.parse(job.tailoredSkills) : [],
+          experience: job.tailoredExperience
+            ? JSON.parse(job.tailoredExperience)
+            : null,
         },
         job.jobDescription || "",
         undefined, // deprecated baseResumePath parameter

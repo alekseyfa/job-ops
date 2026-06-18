@@ -22,10 +22,19 @@ import {
   stripWordLimitFromConstraints,
 } from "./writing-style";
 
+export interface TailoredExperienceEntry {
+  company: string;
+  position: string;
+  bullets: string[];
+}
+
 export interface TailoredData {
   summary: string;
   headline: string;
   skills: Array<{ name: string; keywords: string[] }>;
+  /** Provenance-safe rephrased experience bullets (WS1-T3). Optional — only
+   * requested when the tailorExperienceBullets flag is on. */
+  experience?: TailoredExperienceEntry[];
 }
 
 export interface TailoringResult {
@@ -34,45 +43,84 @@ export interface TailoringResult {
   error?: string;
 }
 
-/** JSON schema for resume tailoring response */
-const TAILORING_SCHEMA: JsonSchemaDefinition = {
-  name: "resume_tailoring",
-  schema: {
-    type: "object",
-    properties: {
-      headline: {
-        type: "string",
-        description: "Job title headline matching the JD exactly",
-      },
-      summary: {
-        type: "string",
-        description: "Tailored resume summary paragraph",
-      },
-      skills: {
-        type: "array",
-        description: "Skills sections with keywords tailored to the job",
-        items: {
-          type: "object",
-          properties: {
-            name: {
-              type: "string",
-              description: "Skill category name (e.g., Frontend, Backend)",
-            },
-            keywords: {
-              type: "array",
-              items: { type: "string" },
-              description: "List of skills/technologies in this category",
-            },
+/**
+ * JSON schema for resume tailoring response. The experience field is added
+ * only when experience-bullet tailoring is enabled (WS1-T3), so the default
+ * request shape is unchanged when the flag is off.
+ */
+function buildTailoringSchema(includeExperience: boolean): JsonSchemaDefinition {
+  const properties: Record<string, unknown> = {
+    headline: {
+      type: "string",
+      description: "Job title headline matching the JD exactly",
+    },
+    summary: {
+      type: "string",
+      description: "Tailored resume summary paragraph",
+    },
+    skills: {
+      type: "array",
+      description: "Skills sections with keywords tailored to the job",
+      items: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Skill category name (e.g., Frontend, Backend)",
           },
-          required: ["name", "keywords"],
-          additionalProperties: false,
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of skills/technologies in this category",
+          },
         },
+        required: ["name", "keywords"],
+        additionalProperties: false,
       },
     },
-    required: ["headline", "summary", "skills"],
-    additionalProperties: false,
-  },
-};
+  };
+  const required = ["headline", "summary", "skills"];
+
+  if (includeExperience) {
+    properties.experience = {
+      type: "array",
+      description:
+        "Each existing experience entry with its bullets REPHRASED (never invented) to emphasize JD-relevant work.",
+      items: {
+        type: "object",
+        properties: {
+          company: {
+            type: "string",
+            description: "Company name, copied verbatim from the profile",
+          },
+          position: {
+            type: "string",
+            description: "Position title, copied verbatim from the profile",
+          },
+          bullets: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Rephrased bullet points — only rewordings of the candidate's existing bullets, no new skills/metrics/employers",
+          },
+        },
+        required: ["company", "position", "bullets"],
+        additionalProperties: false,
+      },
+    };
+    required.push("experience");
+  }
+
+  return {
+    name: "resume_tailoring",
+    schema: {
+      type: "object",
+      properties,
+      required,
+      additionalProperties: false,
+    },
+  };
+}
 
 /**
  * Generate tailored resume content (summary, headline, skills) for a job.
@@ -81,7 +129,9 @@ export async function generateTailoring(
   jobDescription: string,
   profile: ResumeProfile,
   matchAnalysis?: JobMatchAnalysis | null,
+  options?: { includeExperience?: boolean },
 ): Promise<TailoringResult> {
+  const includeExperience = options?.includeExperience ?? false;
   const [model, writingStyle] = await Promise.all([
     resolveLlmModel("tailoring"),
     getWritingStyle(),
@@ -91,13 +141,14 @@ export async function generateTailoring(
     jobDescription,
     writingStyle,
     matchAnalysis,
+    includeExperience,
   );
 
   const llm = await createConfiguredLlmService();
   const result = await llm.callJson<TailoredData>({
     model,
     messages: [{ role: "user", content: prompt }],
-    jsonSchema: TAILORING_SCHEMA,
+    jsonSchema: buildTailoringSchema(includeExperience),
   });
 
   if (!result.success) {
@@ -113,7 +164,7 @@ export async function generateTailoring(
     };
   }
 
-  const { summary, headline, skills } = result.data;
+  const { summary, headline, skills, experience } = result.data;
 
   // Basic validation
   if (!summary || !headline || !Array.isArray(skills)) {
@@ -126,6 +177,27 @@ export async function generateTailoring(
       summary: sanitizeText(summary || ""),
       headline: sanitizeText(headline || ""),
       skills: skills || [],
+      // Only surface experience when it was requested AND well-formed; the
+      // provenance guard (token-level no-fabrication) is enforced downstream
+      // in applyTailoredExperience, which has the parsed base resume.
+      experience:
+        includeExperience && Array.isArray(experience)
+          ? experience
+              .filter(
+                (e) =>
+                  e &&
+                  typeof e.company === "string" &&
+                  typeof e.position === "string" &&
+                  Array.isArray(e.bullets),
+              )
+              .map((e) => ({
+                company: e.company,
+                position: e.position,
+                bullets: e.bullets
+                  .filter((b): b is string => typeof b === "string")
+                  .map((b) => sanitizeText(b)),
+              }))
+          : undefined,
     },
   };
 }
@@ -168,6 +240,7 @@ async function buildTailoringPrompt(
   jd: string,
   writingStyle: Awaited<ReturnType<typeof getWritingStyle>>,
   matchAnalysis?: JobMatchAnalysis | null,
+  includeExperience = false,
 ): Promise<string> {
   const resolvedLanguage = resolveWritingOutputLanguage({
     style: writingStyle,
@@ -222,7 +295,7 @@ async function buildTailoringPrompt(
   const missingSkills = (matchAnalysis?.skills?.missing ?? []).join(", ");
   const tailoringTips = (matchAnalysis?.tailoringTips ?? []).join("; ");
 
-  return renderPromptTemplate(template, {
+  const rendered = renderPromptTemplate(template, {
     jobDescription: truncateJobDescription(jd),
     profileJson: JSON.stringify(relevantProfile, null, 2),
     addToResumeKeywords,
@@ -246,6 +319,21 @@ async function buildTailoringPrompt(
       ? `- Avoid these words or phrases: ${writingStyle.doNotUse}`
       : "",
   });
+
+  // WS1-T3: when experience-bullet tailoring is on, append a strict
+  // rephrase-only instruction. Appended (not woven into the user-overridable
+  // template) so the off-path prompt is unchanged. The model receives the
+  // candidate's real experience entries above (relevantProfile.experience),
+  // and the no-fabrication contract is additionally enforced in code by the
+  // provenance guard in applyTailoredExperience.
+  if (!includeExperience) return rendered;
+  return `${rendered}
+
+EXPERIENCE TAILORING (return an "experience" array):
+- For each of MY existing experience entries, copy "company" and "position" VERBATIM and return a "bullets" array.
+- Each bullet must be a REPHRASING of one of my existing bullets to emphasize JD-relevant work.
+- NEVER invent a skill, technology, employer, metric, or responsibility that is not already in my profile. If a bullet has no JD-relevant angle, return it essentially unchanged.
+- Keep the same number of bullets or fewer; do not pad.`;
 }
 
 function sanitizeText(text: string): string {
