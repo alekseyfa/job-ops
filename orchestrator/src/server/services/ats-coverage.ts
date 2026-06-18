@@ -16,6 +16,8 @@
  * thin separate function the caller invokes.
  */
 
+import { readFile } from "node:fs/promises";
+import { logger } from "@infra/logger";
 import type { TailoringReport } from "@shared/types";
 import type { WeightedJdKeyword } from "./jd-keywords";
 import { isSupported, type ProvenanceIndex } from "./tailoring-provenance";
@@ -79,4 +81,32 @@ export function computeAtsCoverage(
     missingKeywords: missing.slice(0, 20),
     generatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Extract plain text from a rendered PDF. Uses pdf-parse via a lazy import so
+ * a parse failure (or a missing dependency) is NON-FATAL — it returns null and
+ * the caller simply skips the coverage report rather than failing PDF
+ * generation. Imports the library entry directly to avoid pdf-parse's
+ * debug-mode test-fixture read on import.
+ */
+export async function extractPdfText(pdfPath: string): Promise<string | null> {
+  try {
+    // Computed specifier so the bundler/test transformer doesn't statically
+    // resolve pdf-parse at load time (it's an optional runtime dependency).
+    const moduleId = "pdf-parse/lib/pdf-parse.js";
+    const mod = (await import(/* @vite-ignore */ moduleId)) as {
+      default: (buf: Buffer) => Promise<{ text: string }>;
+    };
+    const pdfParse = mod.default;
+    const buffer = await readFile(pdfPath);
+    const parsed = await pdfParse(buffer);
+    return parsed.text ?? null;
+  } catch (error) {
+    logger.warn("ATS coverage: failed to extract PDF text (non-fatal)", {
+      pdfPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
 }

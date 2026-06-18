@@ -2,6 +2,7 @@
  * Service for generating tailored resume content (Summary, Headline, Skills).
  */
 
+import { createHash } from "node:crypto";
 import { logger } from "@infra/logger";
 import type { JobMatchAnalysis, ResumeProfile } from "@shared/types";
 import { extractWeightedJdKeywords } from "./jd-keywords";
@@ -340,4 +341,30 @@ function sanitizeText(text: string): string {
   return text
     .replace(/\*\*[\s\S]*?\*\*/g, "") // remove markdown bold
     .trim();
+}
+
+/**
+ * Version of the tailoring logic/prompt. Bump this when a tailoring improvement
+ * should force already-processed jobs to be re-tailored on their next run.
+ * Folded into the tailoring fingerprint below.
+ */
+export const TAILORING_PROMPT_VERSION = 2;
+
+/**
+ * Fingerprint cached tailored content by job-description hash + the settings
+ * that change the OUTPUT (prompt version + experience flag). When the stored
+ * fingerprint differs, summarizeJob regenerates instead of serving stale
+ * tailoring — so an edited JD or a bumped prompt version auto-refreshes.
+ */
+export function computeTailoringFingerprint(input: {
+  jobDescription: string;
+  includeExperience: boolean;
+}): string {
+  const hash = createHash("sha256");
+  hash.update(`v${TAILORING_PROMPT_VERSION}`);
+  hash.update("|exp:");
+  hash.update(input.includeExperience ? "1" : "0");
+  hash.update("|jd:");
+  hash.update(input.jobDescription ?? "");
+  return hash.digest("hex").slice(0, 16);
 }

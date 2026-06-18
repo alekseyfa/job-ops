@@ -28,6 +28,9 @@ import * as jobsRepo from "../repositories/jobs";
 import * as pipelineRepo from "../repositories/pipeline";
 import { settingsRegistry } from "@shared/settings-registry";
 import * as settingsRepo from "../repositories/settings";
+import { computeAtsCoverage, extractPdfText } from "../services/ats-coverage";
+import { extractWeightedJdKeywords } from "../services/jd-keywords";
+import { buildProvenanceIndex } from "../services/tailoring-provenance";
 import { generatePdf } from "../services/pdf";
 import { getProfile } from "../services/profile";
 import { pickProjectIdsForJob } from "../services/projectSelection";
@@ -36,7 +39,10 @@ import {
   resolveResumeProjectsSettings,
 } from "../services/resumeProjects";
 import { LlmNotConfiguredError } from "../services/llm-errors";
-import { generateTailoring } from "../services/summary";
+import {
+  computeTailoringFingerprint,
+  generateTailoring,
+} from "../services/summary";
 import {
   type PendingChallenge,
   progressHelpers,
@@ -790,14 +796,29 @@ export async function summarizeJob(
       let tailoredSkills = job.tailoredSkills;
       let tailoredExperience = job.tailoredExperience;
 
-      if (!tailoredSummary || !tailoredHeadline || options?.force) {
+      // WS1-T3: experience-bullet tailoring is opt-in and provenance-gated.
+      const includeExperience =
+        settingsRegistry.tailorExperienceBullets.parse(
+          (await settingsRepo.getSetting("tailorExperienceBullets")) ??
+            undefined,
+        ) === true;
+
+      // WS1-T7: regenerate when content is missing, forced, OR the fingerprint
+      // (JD hash + prompt version + experience flag) changed — so an edited JD
+      // or a bumped TAILORING_PROMPT_VERSION auto-refreshes stale tailoring.
+      const fingerprint = computeTailoringFingerprint({
+        jobDescription: job.jobDescription || "",
+        includeExperience,
+      });
+      const fingerprintStale = job.tailoringFingerprint !== fingerprint;
+
+      if (
+        !tailoredSummary ||
+        !tailoredHeadline ||
+        options?.force ||
+        fingerprintStale
+      ) {
         jobLogger.info("Generating tailoring content");
-        // WS1-T3: experience-bullet tailoring is opt-in and provenance-gated.
-        const includeExperience =
-          settingsRegistry.tailorExperienceBullets.parse(
-            (await settingsRepo.getSetting("tailorExperienceBullets")) ??
-              undefined,
-          ) === true;
         const tailoringResult = await generateTailoring(
           job.jobDescription || "",
           profile,
@@ -864,6 +885,7 @@ export async function summarizeJob(
         tailoredHeadline: tailoredHeadline ?? undefined,
         tailoredSkills: tailoredSkills ?? undefined,
         tailoredExperience: tailoredExperience ?? undefined,
+        tailoringFingerprint: fingerprint,
         selectedProjectIds: selectedProjectIds ?? undefined,
       });
 
@@ -940,9 +962,39 @@ export async function generateFinalPdf(
         };
       }
 
+      // WS1-T5: parse-back ATS coverage report. Behind a default-off flag;
+      // any failure (extraction, parse) is non-fatal — the PDF is already
+      // rendered and the report is purely informational.
+      let tailoringReport: import("@shared/types").TailoringReport | undefined;
+      const coverageEnabled =
+        settingsRegistry.atsCoverageReportEnabled.parse(
+          (await settingsRepo.getSetting("atsCoverageReportEnabled")) ??
+            undefined,
+        ) === true;
+      if (coverageEnabled && pdfResult.pdfPath) {
+        try {
+          const text = await extractPdfText(pdfResult.pdfPath);
+          if (text) {
+            const profileForCoverage = await getProfile();
+            const keywords = extractWeightedJdKeywords(
+              job.jobDescription || "",
+              job.matchAnalysis,
+            );
+            tailoringReport = computeAtsCoverage(
+              text,
+              keywords,
+              buildProvenanceIndex(profileForCoverage),
+            );
+          }
+        } catch (error) {
+          jobLogger.warn("ATS coverage report failed (non-fatal)", error);
+        }
+      }
+
       await jobsRepo.updateJob(job.id, {
         status: "ready",
         pdfPath: pdfResult.pdfPath,
+        tailoringReport: tailoringReport ?? undefined,
       });
 
       const analyticsOrigin = options?.analyticsOrigin ?? "move_to_ready";

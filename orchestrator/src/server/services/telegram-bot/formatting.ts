@@ -91,6 +91,20 @@ export function formatJobCard(job: Job): string {
     }
   }
 
+  // ATS coverage report (WS1) — a parser-grounded ESTIMATE, not a real ATS
+  // score. Surfaces how much of the JD made it into the rendered resume plus
+  // the truthful keywords still worth adding.
+  const report = job.tailoringReport;
+  if (report) {
+    lines.push("");
+    lines.push(`<b>📊 ATS coverage:</b> ~${report.coveragePct}% <i>(estimate)</i>`);
+    if (report.missingKeywords && report.missingKeywords.length > 0) {
+      lines.push(
+        `➕ Truthful keywords to add: ${escapeHtml(report.missingKeywords.slice(0, 5).join(", "))}`,
+      );
+    }
+  }
+
   // Ghost-job signals
   const signals = job.legitimacySignals ?? [];
   if (signals.length > 0 && job.legitimacyTier !== "green") {

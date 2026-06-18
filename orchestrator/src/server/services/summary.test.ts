@@ -27,8 +27,36 @@ vi.mock("./writing-style", async (importOriginal) => {
 });
 
 import { getSetting } from "../repositories/settings";
-import { generateTailoring } from "./summary";
+import {
+  computeTailoringFingerprint,
+  generateTailoring,
+  TAILORING_PROMPT_VERSION,
+} from "./summary";
 import { getWritingStyle } from "./writing-style";
+
+describe("computeTailoringFingerprint (WS1-T7)", () => {
+  it("is stable for identical inputs", () => {
+    const a = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: false });
+    const b = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: false });
+    expect(a).toBe(b);
+  });
+
+  it("changes when the job description changes", () => {
+    const a = computeTailoringFingerprint({ jobDescription: "JD one", includeExperience: false });
+    const b = computeTailoringFingerprint({ jobDescription: "JD two", includeExperience: false });
+    expect(a).not.toBe(b);
+  });
+
+  it("changes when the experience flag changes", () => {
+    const a = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: false });
+    const b = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: true });
+    expect(a).not.toBe(b);
+  });
+
+  it("exposes a numeric prompt version that callers can bump", () => {
+    expect(typeof TAILORING_PROMPT_VERSION).toBe("number");
+  });
+});
 
 describe("generateTailoring", () => {
   beforeEach(() => {

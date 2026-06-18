@@ -263,6 +263,8 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 ### PDF Generation
 - Two renderers: `rxresume` (default) and `latex`
 - ATS text normalization applied in `orchestrator/src/server/services/rxresume/tailoring.ts`
+- **Per-vacancy ATS tailoring (WS1), all behind default-OFF settings:** the scorer's match analysis is fed into tailoring (no more "keyword stuffing"); a provenance guard (`services/tailoring-provenance.ts`) drops any injected skill/keyword the base resume doesn't support (enforced in `applyTailoredSkills` + `applyTailoredExperience`); experience bullets are rephrased only (flag `tailorExperienceBullets`); tailored job PDFs can render single-column for ATS parseability (flag `tailoredPdfSingleColumn`, tailored PDFs only — never the base/design resume); and a parse-back coverage report (flag `atsCoverageReportEnabled`) reads the rendered PDF back via `pdf-parse` and computes weighted keyword coverage. Tailored content is fingerprinted by JD-hash + `TAILORING_PROMPT_VERSION` so an edited JD or a bumped version auto-re-tailors stale jobs.
+- **ATS coverage % is an INTERNAL HEURISTIC, not a real ATS score.** `pdf-parse` reconstructs reading order with its own rules, which do NOT match Workday/Taleo/Greenhouse parsers. Treat the number as a relative proxy; to validate against a real ATS, follow the manual procedure in `orchestrator/docs/ats-calibration.md`. Do not present coverage % to users as a guaranteed pass-rate.
 
 ## Common Pitfalls
 
