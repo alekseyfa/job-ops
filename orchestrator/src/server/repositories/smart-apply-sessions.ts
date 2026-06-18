@@ -145,6 +145,39 @@ export async function updateSmartApplySession(
 }
 
 /**
+ * Update a single essay field's answer in the session's prefilled form.
+ * Atomic operation: fetches session, updates the specific field, persists.
+ *
+ * Sets:
+ * - value = { kind: 'text', value: answer }
+ * - filled = true
+ * - requiresReview = false (user has reviewed/approved the draft)
+ * - draftedAnswer = answer (tracks that this field was AI-drafted)
+ */
+export async function updateSessionEssayAnswer(
+  sessionId: string,
+  selector: string,
+  answer: string,
+): Promise<void> {
+  const session = await getSmartApplySessionById(sessionId);
+  if (!session?.prefilled) {
+    throw new Error("Session has no prefilled form.");
+  }
+
+  const field = session.prefilled.fields.find((f) => f.selector === selector);
+  if (!field) {
+    throw new Error(`Field with selector "${selector}" not found in session.`);
+  }
+
+  field.value = { kind: "text", value: answer };
+  field.filled = true;
+  field.requiresReview = false;
+  field.draftedAnswer = answer;
+
+  await updateSmartApplySession(sessionId, { prefilled: session.prefilled });
+}
+
+/**
  * Mark every non-terminal session as expired.  Called at boot so leftover
  * "preparing"/"ready" rows from a previous container life don't haunt us.
  */
