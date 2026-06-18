@@ -374,6 +374,15 @@ export const settingsRegistry = {
     serialize: (value: Array<{ provider: string; slug: string }> | null | undefined): string | null =>
       value !== null && value !== undefined ? JSON.stringify(value) : null,
   },
+  // ATS Board Presets: user activates curated preset collections via preset IDs.
+  // See shared/src/ats-board-presets.ts for the preset catalog (ATS_BOARD_PRESET_CATALOG).
+  activeAtsBoardPresets: {
+    kind: "typed" as const,
+    schema: z.array(z.string().trim().min(1).max(50)).max(20),
+    default: (): string[] => [],
+    parse: parseJsonArrayOrNull,
+    serialize: serializeNullableJsonArray,
+  },
   scoringInstructions: {
     kind: "typed" as const,
     schema: z.string().trim().max(4000),
