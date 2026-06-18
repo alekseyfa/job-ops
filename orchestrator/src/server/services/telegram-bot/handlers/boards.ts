@@ -5,6 +5,10 @@ import { discoverWorkdayUrl, parseWorkdayUrl } from "@extractors/ats-boards/src/
 import * as settingsRepo from "../../../repositories/settings";
 import { awaitingInput } from "../awaiting-input";
 import { escapeHtml } from "../formatting";
+import {
+  ATS_BOARD_PRESET_CATALOG,
+  getPresetById,
+} from "@shared/ats-board-presets";
 
 interface AtsBoardEntry {
   provider: "greenhouse" | "ashby" | "lever" | "workday" | "smartrecruiters";
@@ -70,6 +74,8 @@ function buildBoardsListView(
 
   const keyboard = new InlineKeyboard()
     .text("+ Add", "b:add")
+    .text("📦 Presets", "b:presets")
+    .row()
     .text("❓ Help", "b:help");
 
   if (boards.length > 0) {
@@ -240,6 +246,125 @@ export function registerBoardHandlers(bot: Bot): void {
     } catch (err) {
       logErr("Boards remove error", err);
       await ctx.reply("❌ Failed to remove board.").catch(() => {});
+    }
+  });
+
+  // Preset list
+  bot.callbackQuery("b:presets", async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      const keyboard = new InlineKeyboard();
+
+      for (const preset of ATS_BOARD_PRESET_CATALOG) {
+        keyboard.text(
+          `${preset.name} (${preset.entries.length})`,
+          `b:preset:${preset.id}`,
+        );
+        keyboard.row();
+      }
+
+      keyboard.text("« Back to Boards", "b:menu");
+
+      await ctx.editMessageText(
+        "<b>📦 ATS Board Presets</b>\n\n" +
+          "Curated collections of high-value remote-first companies.\n" +
+          "Tap a preset to preview and enable.\n\n" +
+          "<i>Presets are one-click shortcuts to track multiple companies at once.</i>",
+        { parse_mode: "HTML", reply_markup: keyboard },
+      );
+    } catch (err) {
+      logErr("Presets list error", err);
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
+    }
+  });
+
+  // Preset preview
+  bot.callbackQuery(/^b:preset:([^:]+)$/, async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      const presetId = ctx.match![1];
+      const preset = getPresetById(presetId);
+
+      if (!preset) {
+        await ctx.answerCallbackQuery("❌ Preset not found").catch(() => {});
+        return;
+      }
+
+      const keyboard = new InlineKeyboard()
+        .text("✅ Enable Preset", `b:preset:enable:${preset.id}`)
+        .row()
+        .text("« Back", "b:presets");
+
+      await ctx.editMessageText(
+        `<b>📦 ${escapeHtml(preset.name)}</b>\n\n` +
+          `${escapeHtml(preset.description)}\n\n` +
+          `<b>${preset.entries.length} companies</b> across Greenhouse, Ashby, and Lever.\n\n` +
+          "<i>Tap 'Enable Preset' to add all companies to your tracked boards.</i>",
+        { parse_mode: "HTML", reply_markup: keyboard },
+      );
+    } catch (err) {
+      logErr("Preset preview error", err);
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
+    }
+  });
+
+  // Preset enable
+  bot.callbackQuery(/^b:preset:enable:([^:]+)$/, async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      const presetId = ctx.match![1];
+      const preset = getPresetById(presetId);
+
+      if (!preset) {
+        await ctx.answerCallbackQuery("❌ Preset not found").catch(() => {});
+        return;
+      }
+
+      const boards = await getBoards();
+      const existingKeys = new Set(
+        boards.map((b) => `${b.provider}:${b.slug}`),
+      );
+
+      let addedCount = 0;
+      for (const entry of preset.entries) {
+        const key = `${entry.provider}:${entry.slug}`;
+        if (!existingKeys.has(key)) {
+          boards.push({ provider: entry.provider, slug: entry.slug });
+          existingKeys.add(key);
+          addedCount++;
+        }
+      }
+
+      if (addedCount === 0) {
+        await ctx.editMessageText(
+          `<b>📦 ${escapeHtml(preset.name)}</b>\n\n` +
+            "✅ All companies from this preset are already tracked.\n\n" +
+            "<i>0 new companies added.</i>",
+          {
+            parse_mode: "HTML",
+            reply_markup: new InlineKeyboard()
+              .text("📡 View Boards", "b:menu")
+              .text("« Back", "b:presets"),
+          },
+        );
+        return;
+      }
+
+      await saveBoards(boards);
+
+      const keyboard = new InlineKeyboard()
+        .text("📡 View Boards", "b:menu")
+        .text("« Back", "b:presets");
+
+      await ctx.editMessageText(
+        `<b>✅ Preset Enabled</b>\n\n` +
+          `Added <b>${addedCount}</b> companies from <i>${escapeHtml(preset.name)}</i>.\n\n` +
+          "Jobs will appear in the next pipeline run.",
+        { parse_mode: "HTML", reply_markup: keyboard },
+      );
+    } catch (err) {
+      logErr("Preset enable error", err);
+      await ctx.reply("❌ Failed to enable preset.").catch(() => {});
     }
   });
 
