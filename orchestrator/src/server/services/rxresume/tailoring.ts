@@ -2,6 +2,10 @@ import { createId } from "@paralleldrive/cuid2";
 import type { ResumeProjectCatalogItem } from "@shared/types";
 import { normalizeTextForATS } from "@shared/utils/normalize-ats-text.js";
 import { stripHtmlTags } from "@shared/utils/string";
+import {
+  filterInjectedKeywords,
+  type ProvenanceIndex,
+} from "../tailoring-provenance";
 
 type RecordLike = Record<string, unknown>;
 
@@ -96,6 +100,7 @@ export function applyTailoredSummary(
 export function applyTailoredSkills(
   resumeData: RecordLike,
   tailoredSkills?: TailoredSkillsInput,
+  provenanceIndex?: ProvenanceIndex,
 ): void {
   const skills = parseTailoredSkills(tailoredSkills);
   if (!skills) return;
@@ -128,11 +133,18 @@ export function applyTailoredSkills(
         (typeof match.name === "string" ? match.name : "");
     }
     if ("keywords" in next) {
-      next.keywords = Array.isArray(newSkill.keywords)
-        ? newSkill.keywords.filter((k) => typeof k === "string")
+      const proposed = Array.isArray(newSkill.keywords)
+        ? newSkill.keywords.filter((k): k is string => typeof k === "string")
         : Array.isArray(match.keywords)
-          ? match.keywords.filter((k) => typeof k === "string")
+          ? match.keywords.filter((k): k is string => typeof k === "string")
           : [];
+      // WS1 truthfulness guard: drop any keyword the base resume doesn't
+      // support (directly, via synonym, or all word-tokens present). Falls
+      // open when no index is supplied (backwards compatible) or the resume
+      // is empty, so existing callers/tests are unaffected.
+      next.keywords = provenanceIndex
+        ? filterInjectedKeywords(proposed, provenanceIndex).kept
+        : proposed;
     }
 
     if ("description" in next) {
@@ -251,6 +263,8 @@ export function applyProjectVisibility(args: {
 export function applyTailoredChunks(args: {
   resumeData: RecordLike;
   tailoredContent: TailorChunkInput;
+  /** When supplied, injected skill keywords are validated against the resume. */
+  provenanceIndex?: ProvenanceIndex;
 }): void {
   // Normalize AI-generated text for ATS compatibility before applying
   const normalized: TailorChunkInput = {
@@ -263,7 +277,7 @@ export function applyTailoredChunks(args: {
     skills: normalizeSkillsForATS(args.tailoredContent.skills),
   };
 
-  applyTailoredSkills(args.resumeData, normalized.skills);
+  applyTailoredSkills(args.resumeData, normalized.skills, args.provenanceIndex);
   applyTailoredSummary(args.resumeData, normalized.summary);
   applyTailoredHeadline(args.resumeData, normalized.headline);
 }

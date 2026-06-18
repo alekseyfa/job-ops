@@ -3,6 +3,7 @@ import { getSetting } from "@server/repositories/settings";
 import { getOriginalEnvValue } from "@server/services/envSettings";
 import { pickProjectIdsForJob } from "@server/services/projectSelection";
 import { resolveResumeProjectsSettings } from "@server/services/resumeProjects";
+import { buildProvenanceIndex } from "@server/services/tailoring-provenance";
 import {
   resolveTracerPublicBaseUrl,
   rewriteResumeLinksWithTracer,
@@ -397,9 +398,14 @@ export async function prepareTailoredResumeForPdf(args: {
   }
 
   const workingCopy = cloneResumeData(parsed.data as Record<string, unknown>);
+  // WS1 truthfulness guard: build the provenance index from the BASE resume
+  // (parsed.data) so injected skill keywords that the candidate doesn't
+  // actually have are dropped before they reach the rendered PDF.
+  const provenanceIndex = buildProvenanceIndex(parsed.data);
   applyTailoredChunks({
     resumeData: workingCopy,
     tailoredContent: args.tailoredContent,
+    provenanceIndex,
   });
 
   const { catalog, selectionItems } = extractProjectsFromResumeV5(workingCopy);
