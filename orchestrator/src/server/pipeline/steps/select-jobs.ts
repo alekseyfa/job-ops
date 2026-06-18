@@ -42,14 +42,23 @@ export async function selectJobsStep(args: {
   scoredJobs: ScoredJob[];
   mergedConfig: PipelineConfig;
 }): Promise<ScoredJob[]> {
+  const settings = await settingsRepo.getAllSettings();
   const locationIntent = await resolveLocationIntent(args.mergedConfig);
   const prioritizeSelectedLocations =
     locationIntent.geoScope === "remote_worldwide_prioritize_selected";
 
-  return args.scoredJobs
-    .filter(
-      (job) =>
-        (job.suitabilityScore ?? 0) >= args.mergedConfig.minSuitabilityScore,
+  // WS2: selectionMode lets the user bypass the hard minSuitabilityScore cutoff
+  // when absolute scores drift (Haiku can score the same job 50 vs 65 run to
+  // run). "threshold" (default) keeps the current cutoff-then-topN behavior;
+  // "rank" takes the top-N by rank regardless of the absolute floor, so model
+  // calibration drift can't empty (or flood) the curated list.
+  const selectionMode = settings.selectionMode === "rank" ? "rank" : "threshold";
+
+  const ranked = [...args.scoredJobs]
+    .filter((job) =>
+      selectionMode === "rank"
+        ? job.suitabilityScore != null
+        : (job.suitabilityScore ?? 0) >= args.mergedConfig.minSuitabilityScore,
     )
     .sort((left, right) => {
       const scoreDelta =
@@ -66,6 +75,7 @@ export async function selectJobsStep(args: {
         locationIntent,
       ).priority;
       return rightPriority - leftPriority;
-    })
-    .slice(0, args.mergedConfig.topN);
+    });
+
+  return ranked.slice(0, args.mergedConfig.topN);
 }
