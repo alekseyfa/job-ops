@@ -139,6 +139,19 @@ export interface PipelineFilterMetrics {
    * `discovered` with no score, to be retried in the next run).
    */
   scoringTransientFailures?: number;
+  /**
+   * Jobs gated by the ghost-job "red" legitimacy tier BEFORE scoring (WS2).
+   * These are dead/evergreen postings the detector already flagged, dropped
+   * before they consume LLM budget.
+   */
+  ghostRedSkipped?: number;
+  /**
+   * Near-duplicate / cross-posting listings collapsed to a canonical row at
+   * import (WS2).  Distinct from the exact-URL `jobsDeduplicated` counter —
+   * this counts same-role postings across different boards (LinkedIn + Indeed
+   * + the company ATS) merged into one.
+   */
+  crossPostingDeduplicated?: number;
 }
 
 export interface PipelineRunResultSummary {

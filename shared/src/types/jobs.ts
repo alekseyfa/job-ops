@@ -155,6 +155,44 @@ export interface JobMatchAnalysis {
   };
   dealBreakers: string[];
   tailoringTips: string[];
+  /**
+   * Optional weighted JD keyword set (WS1). Each keyword is tagged with how
+   * important it is and what kind of token it is, mirroring the priority order
+   * ATS match-rate tools use (hard skills > education > title > soft skills >
+   * other). Populated by the weighted JD keyword extractor; legacy analyses
+   * leave it undefined.
+   */
+  weightedKeywords?: WeightedKeyword[];
+}
+
+export interface WeightedKeyword {
+  term: string;
+  importance: "required" | "nice_to_have";
+  type: "hard_skill" | "soft_skill" | "title" | "education" | "other";
+}
+
+/**
+ * Parse-back ATS coverage report (WS1). Produced by re-reading the rendered PDF
+ * and measuring how much of the job description's keyword set actually made it
+ * into the document. coveragePct is an internal heuristic proxy, NOT a real ATS
+ * score — see orchestrator/docs/ats-calibration.md.
+ */
+export interface TailoringReport {
+  coveragePct: number; // 0-100 weighted keyword coverage
+  sectionsDetected: { experience: boolean; education: boolean; skills: boolean };
+  missingKeywords: string[]; // JD keywords absent from the rendered resume
+  rescoreDelta?: number | null; // optional suitability delta after tailoring
+  generatedAt: string;
+}
+
+/** Per-bullet before/after diff of tailored experience, kept for transparency. */
+export interface TailoringExperienceDiff {
+  entries: Array<{
+    company: string;
+    position: string;
+    before: string;
+    after: string;
+  }>;
 }
 
 export type JobLegitimacyTier = "green" | "yellow" | "red";
@@ -213,6 +251,12 @@ export interface Job {
   tailoredSummary: string | null; // Generated resume summary
   tailoredHeadline: string | null; // Generated resume headline
   tailoredSkills: string | null; // Generated resume skills (JSON)
+  tailoredExperience: string | null; // Generated tailored experience bullets (JSON)
+  tailoringExperienceDiff: TailoringExperienceDiff | null; // Per-bullet before/after diff
+  tailoringReport: TailoringReport | null; // Parse-back ATS coverage report
+  tailoringFingerprint: string | null; // Hash(JD + prompt/model version) for cache invalidation
+  crossPostingGroupId: string | null; // Canonical dedup group key for cross-posted listings
+  isCrossPostingDuplicate: boolean; // Marks the non-canonical copy (marked, never deleted)
   selectedProjectIds: string | null; // Comma-separated IDs of selected projects
   pdfPath: string | null; // Path to generated PDF
   coverLetterText: string | null; // Raw LLM-generated cover letter text
@@ -382,6 +426,12 @@ export interface UpdateJobInput {
   tailoredSummary?: string;
   tailoredHeadline?: string;
   tailoredSkills?: string;
+  tailoredExperience?: string | null;
+  tailoringExperienceDiff?: TailoringExperienceDiff | null;
+  tailoringReport?: TailoringReport | null;
+  tailoringFingerprint?: string | null;
+  crossPostingGroupId?: string | null;
+  isCrossPostingDuplicate?: boolean;
   selectedProjectIds?: string;
   pdfPath?: string;
   coverLetterText?: string | null;

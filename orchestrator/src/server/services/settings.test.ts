@@ -99,4 +99,31 @@ describe("getEffectiveSettings", () => {
     await expect(getEffectiveSettings()).resolves.toBeTruthy();
     expect(designResumeToProfile).not.toHaveBeenCalled();
   });
+
+  it("resolves the Phase-1 flags with conservative (feature-off) defaults", async () => {
+    const settings = await getEffectiveSettings();
+
+    // Every risky WS1/WS3 feature must be OFF by default so the foundation
+    // commit changes no behavior.
+    expect(settings.tailoredPdfSingleColumn.value).toBe(false);
+    expect(settings.tailorExperienceBullets.value).toBe(false);
+    expect(settings.atsCoverageReportEnabled.value).toBe(false);
+    expect(settings.screeningDraftEnabled.value).toBe(false);
+    expect(settings.maxResumePages.value).toBe(1);
+    expect(settings.tailoringPromptVersion.value).toBe(1);
+    expect(settings.selectionMode.value).toBe("threshold");
+  });
+
+  it("round-trips a stored override for the new flags", async () => {
+    vi.mocked(getAllSettings).mockResolvedValue({
+      tailorExperienceBullets: "1",
+      selectionMode: "rank",
+    } as never);
+
+    const settings = await getEffectiveSettings();
+
+    expect(settings.tailorExperienceBullets.value).toBe(true);
+    expect(settings.tailorExperienceBullets.override).toBe(true);
+    expect(settings.selectionMode.value).toBe("rank");
+  });
 });

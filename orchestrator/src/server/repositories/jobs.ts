@@ -16,6 +16,8 @@ import type {
   JobNote,
   JobStatus,
   JobsRevisionResponse,
+  TailoringExperienceDiff,
+  TailoringReport,
   UpdateJobInput,
   UpdateJobNoteInput,
 } from "@shared/types";
@@ -867,6 +869,13 @@ function mapRowToJob(row: typeof jobs.$inferSelect): Job {
     tailoredSummary: row.tailoredSummary,
     tailoredHeadline: row.tailoredHeadline ?? null,
     tailoredSkills: row.tailoredSkills ?? null,
+    tailoredExperience: row.tailoredExperience ?? null,
+    tailoringExperienceDiff:
+      (row.tailoringExperienceDiff as TailoringExperienceDiff | null) ?? null,
+    tailoringReport: (row.tailoringReport as TailoringReport | null) ?? null,
+    tailoringFingerprint: row.tailoringFingerprint ?? null,
+    crossPostingGroupId: row.crossPostingGroupId ?? null,
+    isCrossPostingDuplicate: row.isCrossPostingDuplicate ?? false,
     selectedProjectIds: row.selectedProjectIds ?? null,
     pdfPath: row.pdfPath,
     coverLetterText: row.coverLetterText ?? null,

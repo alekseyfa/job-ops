@@ -179,6 +179,14 @@ export interface AppSettings {
   ghostwriterStopSlopEnabled: Resolved<boolean>;
   tailoringPromptTemplate: Resolved<string>;
   scoringPromptTemplate: Resolved<string>;
+  // Phase-1 ATS tailoring + matching flags (default values keep current behavior)
+  tailoredPdfSingleColumn: Resolved<boolean>;
+  maxResumePages: Resolved<number>;
+  tailorExperienceBullets: Resolved<boolean>;
+  atsCoverageReportEnabled: Resolved<boolean>;
+  tailoringPromptVersion: Resolved<number>;
+  selectionMode: Resolved<"threshold" | "rank">;
+  screeningDraftEnabled: Resolved<boolean>;
   searchCities: Resolved<string>;
   locationSearchScope: Resolved<LocationSearchScope>;
   locationMatchStrictness: Resolved<LocationMatchStrictness>;
