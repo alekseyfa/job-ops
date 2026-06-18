@@ -4,6 +4,7 @@ import type {
 } from "@shared/types/extractors";
 import type { CreateJobInput } from "@shared/types/jobs";
 import { createRateLimitedFetch } from "job-ops-shared/utils/rate-limited-fetch";
+import { getPresetById } from "@shared/ats-board-presets";
 import { fetchAshbyJobs } from "./ashby";
 import { fetchGreenhouseJobs } from "./greenhouse";
 import { fetchLeverJobs } from "./lever";
@@ -47,14 +48,32 @@ export const manifest: ExtractorManifest = {
   providesSources: ["greenhouse", "ashby", "lever", "workday", "smartrecruiters"],
 
   async run(context) {
-    const entries = parseAtsBoardSlugs(context.settings.atsBoardSlugs);
+    // Parse manually-added boards
+    const manualEntries = parseAtsBoardSlugs(context.settings.atsBoardSlugs);
 
-    if (entries.length === 0) {
+    // Parse active preset IDs and resolve to board entries
+    const activePresetIds: string[] = context.settings.activeAtsBoardPresets
+      ? JSON.parse(context.settings.activeAtsBoardPresets)
+      : [];
+
+    const presetEntries: AtsBoardEntry[] = activePresetIds.flatMap(
+      (id) => getPresetById(id)?.entries ?? [],
+    );
+
+    // Merge manual + preset entries, deduplicate by provider:slug
+    const allEntries = [...manualEntries, ...presetEntries];
+    const deduped = Array.from(
+      new Map(
+        allEntries.map((e) => [`${e.provider}:${e.slug}`, e]),
+      ).values(),
+    );
+
+    if (deduped.length === 0) {
       return { success: true, jobs: [] };
     }
 
     // Filter entries to only those matching requested sources
-    const activeEntries = entries.filter((e) =>
+    const activeEntries = deduped.filter((e) =>
       context.selectedSources.includes(e.provider),
     );
 
