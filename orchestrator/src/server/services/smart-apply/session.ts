@@ -131,12 +131,15 @@ async function launchBrowser(): Promise<{
 async function parseFormViaPlaywright(
   page: Page,
   applyUrl: string,
-  ats: "greenhouse" | "ashby",
+  ats: "greenhouse" | "ashby" | "lever",
 ): Promise<FormSchema> {
   if (ats === "greenhouse") {
     return parseGreenhouseForm({ page, applyUrl });
   }
-  return parseAshbyForm({ page, applyUrl });
+  if (ats === "ashby") {
+    return parseAshbyForm({ page, applyUrl });
+  }
+  return (await import("./parsers/lever")).parseLeverForm({ page, applyUrl });
 }
 
 async function fillForm(
@@ -234,7 +237,7 @@ async function fillField(
   return false;
 }
 
-function isSuccessUrl(url: string, ats: "greenhouse" | "ashby"): boolean {
+function isSuccessUrl(url: string, ats: "greenhouse" | "ashby" | "lever"): boolean {
   if (ats === "greenhouse") {
     return (
       url.includes("/applications/thank_you") ||
@@ -245,12 +248,19 @@ function isSuccessUrl(url: string, ats: "greenhouse" | "ashby"): boolean {
   if (ats === "ashby") {
     return url.includes("/application-submitted") || url.includes("/applications/");
   }
+  if (ats === "lever") {
+    return (
+      url.includes("/application/success") ||
+      url.includes("/applications/") ||
+      url.includes("/thank-you")
+    );
+  }
   return false;
 }
 
 function startSubmitWatcher(
   sessionId: string,
-  ats: "greenhouse" | "ashby",
+  ats: "greenhouse" | "ashby" | "lever",
   jobId: string,
 ): ReturnType<typeof setInterval> {
   return setInterval(async () => {

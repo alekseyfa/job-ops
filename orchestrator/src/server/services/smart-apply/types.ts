@@ -17,7 +17,7 @@
 
 import type { Job } from "@shared/types";
 
-export type SmartApplyAts = "greenhouse" | "ashby";
+export type SmartApplyAts = "greenhouse" | "ashby" | "lever";
 
 export type FormFieldType =
   | "text"
@@ -80,6 +80,11 @@ export interface PrefilledField {
   requiresReview: boolean;
   /** Optional context for the user (e.g. "drafted from job description"). */
   note?: string;
+  /** AI-drafted answer (for textarea fields). Stored separately from value.value
+   * so we can track which essays have been drafted vs manually filled. */
+  draftedAnswer?: string;
+  /** Optional hint text shown next to the field on the form. */
+  hint?: string;
 }
 
 export interface PrefilledForm {
@@ -88,6 +93,9 @@ export interface PrefilledForm {
   fields: PrefilledField[];
   /** Convenience: list of `requiresReview=true` fields for UI summary. */
   reviewRequiredCount: number;
+  /** Subset of fields where type='textarea' && requiresReview=true.
+   * For Telegram UI to iterate when drafting essays. */
+  essayFields: PrefilledField[];
 }
 
 export type SmartApplyStatus =
