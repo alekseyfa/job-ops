@@ -301,5 +301,6 @@ export const createAppSettings = (
   penalizeMissingSalary: { value: false, default: false, override: null },
   missingSalaryPenalty: { value: 10, default: 10, override: null },
   autoSkipScoreThreshold: { value: null, default: null, override: null },
+  activeAtsBoardPresets: { value: [], default: [], override: null },
   ...overrides,
 });
