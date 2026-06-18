@@ -12,8 +12,8 @@ import type { JobApplicabilityContext } from "./types";
  * opening a form we cannot fill safely.
  *
  * These tests pin:
- *   • only `greenhouse` + `ashby` are eligible (every other source must be
- *     explicitly added),
+ *   • only `greenhouse` + `ashby` + `lever` are eligible (every other source
+ *     must be explicitly added),
  *   • URL-based detection works even when the source field disagrees (so
  *     an apply link that lives on a Greenhouse board but came from a
  *     LinkedIn crawl is still picked up),
@@ -60,6 +60,19 @@ describe("evaluateSmartApplyEligibility", () => {
     }
   });
 
+  it("admits Lever jobs by source", () => {
+    const v = evaluateSmartApplyEligibility(
+      ctx({
+        source: "lever",
+        applicationLink: "https://jobs.lever.co/acme/abc",
+      }),
+    );
+    expect(v.eligible).toBe(true);
+    if (v.eligible) {
+      expect(v.ats).toBe("lever");
+    }
+  });
+
   it("admits via URL even when the source field disagrees", () => {
     // LinkedIn crawl whose apply link is actually a Greenhouse board.
     const v1 = evaluateSmartApplyEligibility(
@@ -80,6 +93,16 @@ describe("evaluateSmartApplyEligibility", () => {
     );
     expect(v2.eligible).toBe(true);
     if (v2.eligible) expect(v2.ats).toBe("ashby");
+
+    // Same idea for Lever.
+    const v3 = evaluateSmartApplyEligibility(
+      ctx({
+        source: "linkedin",
+        applicationLink: "https://jobs.lever.co/acme/xyz",
+      }),
+    );
+    expect(v3.eligible).toBe(true);
+    if (v3.eligible) expect(v3.ats).toBe("lever");
   });
 
   it("falls back to jobUrl when applicationLink is missing", () => {
@@ -99,7 +122,6 @@ describe("evaluateSmartApplyEligibility", () => {
     ["indeed", "https://www.indeed.com/viewjob?jk=x"],
     ["manual", "https://acme.com/careers/123"],
     ["workday", "https://acme.wd1.myworkdayjobs.com/Acme/123"],
-    ["lever", "https://jobs.lever.co/acme/123"],
   ])("rejects unsupported source %s with explicit reason", (source, url) => {
     const v = evaluateSmartApplyEligibility(
       ctx({ source: source as any, applicationLink: url }),
