@@ -769,6 +769,7 @@ export async function summarizeJob(
         const tailoringResult = await generateTailoring(
           job.jobDescription || "",
           profile,
+          job.matchAnalysis,
         );
         if (tailoringResult.success && tailoringResult.data) {
           tailoredSummary = tailoringResult.data.summary;

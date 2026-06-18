@@ -3,7 +3,8 @@
  */
 
 import { logger } from "@infra/logger";
-import type { ResumeProfile } from "@shared/types";
+import type { JobMatchAnalysis, ResumeProfile } from "@shared/types";
+import { extractWeightedJdKeywords } from "./jd-keywords";
 import type { JsonSchemaDefinition } from "./llm/types";
 import { createConfiguredLlmService, resolveLlmModel } from "./modelSelection";
 import {
@@ -79,6 +80,7 @@ const TAILORING_SCHEMA: JsonSchemaDefinition = {
 export async function generateTailoring(
   jobDescription: string,
   profile: ResumeProfile,
+  matchAnalysis?: JobMatchAnalysis | null,
 ): Promise<TailoringResult> {
   const [model, writingStyle] = await Promise.all([
     resolveLlmModel("tailoring"),
@@ -88,6 +90,7 @@ export async function generateTailoring(
     profile,
     jobDescription,
     writingStyle,
+    matchAnalysis,
   );
 
   const llm = await createConfiguredLlmService();
@@ -164,6 +167,7 @@ async function buildTailoringPrompt(
   profile: ResumeProfile,
   jd: string,
   writingStyle: Awaited<ReturnType<typeof getWritingStyle>>,
+  matchAnalysis?: JobMatchAnalysis | null,
 ): Promise<string> {
   const resolvedLanguage = resolveWritingOutputLanguage({
     style: writingStyle,
@@ -203,9 +207,27 @@ async function buildTailoringPrompt(
 
   const template = await getEffectivePromptTemplate("tailoringPromptTemplate");
 
+  // WS1: feed the scorer's already-computed match analysis into tailoring so
+  // the tailorer prioritizes the EXACT JD phrases the scorer identified instead
+  // of re-deriving them. When no analysis is available these render empty, so
+  // the prompt is byte-identical to the pre-WS1 baseline.
+  const weightedKeywords = matchAnalysis
+    ? extractWeightedJdKeywords(jd, matchAnalysis)
+    : [];
+  const priorityKeywords = weightedKeywords
+    .filter((k) => k.class === "hard" || k.class === "title")
+    .map((k) => k.term);
+  const addToResumeKeywords =
+    priorityKeywords.length > 0 ? priorityKeywords.join(", ") : "";
+  const missingSkills = (matchAnalysis?.skills?.missing ?? []).join(", ");
+  const tailoringTips = (matchAnalysis?.tailoringTips ?? []).join("; ");
+
   return renderPromptTemplate(template, {
     jobDescription: truncateJobDescription(jd),
     profileJson: JSON.stringify(relevantProfile, null, 2),
+    addToResumeKeywords,
+    missingSkills,
+    tailoringTips,
     outputLanguage,
     tone: writingStyle.tone,
     formality: writingStyle.formality,
