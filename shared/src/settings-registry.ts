@@ -937,6 +937,47 @@ export const settingsRegistry = {
     serialize: serializeBitBool,
   },
 
+  // --- Applied-Duplicate Filter (auto-skip reposted jobs) ---
+  // When true, a discovered job that matches a role the user already applied
+  // to (or is in-progress on) is auto-skipped before scoring, so the same
+  // vacancy reposted to another board (or re-listed weeks later) does not
+  // flood the feed or burn LLM budget. Marked `skipped`, never deleted.
+  skipAppliedDuplicates: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean => true,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
+  // Minimum title AND employer similarity (0-100) for two postings to count as
+  // the same vacancy. 90 is the proven high-precision default; lower it to
+  // catch reworded reposts at some false-positive risk.
+  appliedDuplicateThreshold: {
+    kind: "typed" as const,
+    schema: z.number().int().min(50).max(100),
+    default: (): number => 90,
+    parse: (raw: string | undefined): number | null => {
+      if (!raw || raw === "null" || raw === "") return null;
+      const parsed = parseInt(raw, 10);
+      return Number.isNaN(parsed) ? null : Math.min(100, Math.max(50, parsed));
+    },
+    serialize: serializeNullableNumber,
+  },
+  // How many days after applying a repost still counts as a duplicate. Beyond
+  // this, a re-listing is treated as a genuinely new opening (companies do
+  // re-open roles), so it is scored normally.
+  appliedDuplicateWindowDays: {
+    kind: "typed" as const,
+    schema: z.number().int().min(1).max(365),
+    default: (): number => 30,
+    parse: (raw: string | undefined): number | null => {
+      if (!raw || raw === "null" || raw === "") return null;
+      const parsed = parseInt(raw, 10);
+      return Number.isNaN(parsed) ? null : Math.min(365, Math.max(1, parsed));
+    },
+    serialize: serializeNullableNumber,
+  },
+
   // --- Pipeline Scheduling ---
   pipelineScheduleEnabled: {
     kind: "typed" as const,

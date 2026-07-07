@@ -241,6 +241,9 @@ export const createAppSettings = (
   applyYearsExperience: { value: null, default: null, override: null },
   applyRequiresVisaSponsorship: { value: null, default: null, override: null },
   applyDeclineDemographics: { value: true, default: true, override: null },
+  skipAppliedDuplicates: { value: true, default: true, override: null },
+  appliedDuplicateThreshold: { value: 90, default: 90, override: null },
+  appliedDuplicateWindowDays: { value: 30, default: 30, override: null },
   searchCities: {
     value: "",
     default: "",

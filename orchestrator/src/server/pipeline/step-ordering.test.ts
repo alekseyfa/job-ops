@@ -41,6 +41,7 @@ describe("pipeline step ordering", () => {
     "preImportLivenessStep",
     "importJobsStep",
     "filterRelocationJobsStep",
+    "filterAppliedDuplicatesStep",
     "filterAntiDomainJobsStep",
     "filterGhostJobsStep",
     "checkLivenessStep",
@@ -92,6 +93,9 @@ describe("pipeline step ordering", () => {
     // is exactly what we hit in the May 2026 regression. Belt and braces.
     expect(stepsIndexSource).toContain(
       'export { filterRelocationJobsStep } from "./filter-relocation"',
+    );
+    expect(stepsIndexSource).toContain(
+      'export { filterAppliedDuplicatesStep } from "./filter-applied-duplicates"',
     );
     expect(stepsIndexSource).toContain(
       'export { filterAntiDomainJobsStep } from "./filter-anti-domain"',

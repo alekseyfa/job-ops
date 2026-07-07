@@ -196,6 +196,10 @@ export interface AppSettings {
   applyYearsExperience: Resolved<number | null>;
   applyRequiresVisaSponsorship: Resolved<boolean | null>;
   applyDeclineDemographics: Resolved<boolean>;
+  // Applied-duplicate filter (auto-skip reposted jobs already applied to).
+  skipAppliedDuplicates: Resolved<boolean>;
+  appliedDuplicateThreshold: Resolved<number>;
+  appliedDuplicateWindowDays: Resolved<number>;
   searchCities: Resolved<string>;
   locationSearchScope: Resolved<LocationSearchScope>;
   locationMatchStrictness: Resolved<LocationMatchStrictness>;

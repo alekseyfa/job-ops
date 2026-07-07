@@ -57,6 +57,7 @@ import {
   checkLivenessStep,
   discoverJobsStep,
   filterAntiDomainJobsStep,
+  filterAppliedDuplicatesStep,
   filterGhostJobsStep,
   filterRelocationJobsStep,
   importJobsStep,
@@ -476,6 +477,23 @@ export async function runPipeline(
         filterMetrics: {
           ...(resultSummary.filterMetrics ?? {}),
           relocationSkipped,
+        },
+      });
+
+      ensureNotCancelled(tenantId);
+      const { markedCount: appliedDuplicateSkipped } =
+        await filterAppliedDuplicatesStep();
+      if (appliedDuplicateSkipped > 0) {
+        pipelineLogger.info(
+          "Applied-duplicate filter auto-skipped reposts of applied jobs",
+          { skipped: appliedDuplicateSkipped },
+        );
+      }
+      await persistResultSummary({
+        stage: "import",
+        filterMetrics: {
+          ...(resultSummary.filterMetrics ?? {}),
+          appliedDuplicateSkipped,
         },
       });
 

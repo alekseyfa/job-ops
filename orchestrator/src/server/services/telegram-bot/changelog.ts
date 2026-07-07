@@ -37,6 +37,18 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.19.0",
+    date: "2026-07-07",
+    items: [
+      {
+        title: "🔁 Auto-skip jobs you already applied to",
+        description:
+          "When the same role gets reposted or re-listed on another board, the pipeline now recognizes it as one you already applied to and skips it automatically — so you stop seeing the same job twice. It only matches within 30 days of your application, so genuinely re-opened roles still come through.",
+        tip: "On by default. To turn it off or loosen the matching, see Settings (skipAppliedDuplicates). Skipped reposts still appear in 'All Jobs' and are counted in the run summary as '🔁 Already applied'.",
+      },
+    ],
+  },
+  {
     version: "1.18.0",
     date: "2026-07-07",
     items: [

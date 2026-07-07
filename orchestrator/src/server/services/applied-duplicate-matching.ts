@@ -17,6 +17,24 @@ const HISTORICAL_JOB_STATUSES: ReadonlySet<JobStatus> = new Set([
   "in_progress",
 ]);
 
+/**
+ * Tunable match parameters. Defaults reproduce the proven high-precision
+ * behaviour (≥90% title AND employer similarity, within 30 days of applying).
+ * The pipeline step passes user settings here so the filter can be loosened /
+ * tightened without a code change; the web-API display path uses the defaults.
+ */
+export interface AppliedDuplicateConfig {
+  /** Minimum title AND employer similarity (exclusive lower bound), 0-100. */
+  threshold: number;
+  /** How long after applying a repost still counts as a duplicate. */
+  windowMs: number;
+}
+
+export const DEFAULT_APPLIED_DUPLICATE_CONFIG: AppliedDuplicateConfig = {
+  threshold: APPLIED_DUPLICATE_THRESHOLD,
+  windowMs: APPLIED_DUPLICATE_WINDOW_MS,
+};
+
 type MatchableJob = Pick<
   Job,
   "id" | "title" | "employer" | "status" | "appliedAt" | "discoveredAt"
@@ -52,18 +70,20 @@ function prepareMatchableJob(job: MatchableJob): PreparedMatchableJob {
 function isWithinDuplicateWindow(
   job: PreparedMatchableJob,
   candidate: PreparedMatchableJob,
+  windowMs: number,
 ) {
   if (job.discoveredAtMs === null || candidate.appliedAtMs === null) {
     return false;
   }
 
   const ageMs = job.discoveredAtMs - candidate.appliedAtMs;
-  return ageMs >= 0 && ageMs <= APPLIED_DUPLICATE_WINDOW_MS;
+  return ageMs >= 0 && ageMs <= windowMs;
 }
 
 function findAppliedDuplicateMatchFromPreparedJobs(
   job: PreparedMatchableJob,
   candidates: PreparedMatchableJob[],
+  config: AppliedDuplicateConfig = DEFAULT_APPLIED_DUPLICATE_CONFIG,
 ): AppliedDuplicateMatch | null {
   if (!job.normalizedTitle || !job.normalizedEmployer) {
     return null;
@@ -81,7 +101,7 @@ function findAppliedDuplicateMatchFromPreparedJobs(
       continue;
     }
 
-    if (!isWithinDuplicateWindow(job, candidate)) {
+    if (!isWithinDuplicateWindow(job, candidate, config.windowMs)) {
       continue;
     }
 
@@ -95,8 +115,8 @@ function findAppliedDuplicateMatchFromPreparedJobs(
     );
 
     if (
-      titleScore <= APPLIED_DUPLICATE_THRESHOLD ||
-      employerScore <= APPLIED_DUPLICATE_THRESHOLD
+      titleScore <= config.threshold ||
+      employerScore <= config.threshold
     ) {
       continue;
     }
@@ -131,6 +151,7 @@ function findAppliedDuplicateMatchFromPreparedJobs(
 export function findAppliedDuplicateMatch(
   job: MatchableJob,
   candidates: MatchableJob[],
+  config: AppliedDuplicateConfig = DEFAULT_APPLIED_DUPLICATE_CONFIG,
 ): AppliedDuplicateMatch | null {
   if (isHistoricalAppliedJob(job)) {
     return null;
@@ -144,12 +165,14 @@ export function findAppliedDuplicateMatch(
   return findAppliedDuplicateMatchFromPreparedJobs(
     preparedJob,
     candidates.map(prepareMatchableJob),
+    config,
   );
 }
 
 export function attachAppliedDuplicateMatches<T extends Job | JobListItem>(
   jobs: T[],
   candidates: MatchableJob[],
+  config: AppliedDuplicateConfig = DEFAULT_APPLIED_DUPLICATE_CONFIG,
 ): T[] {
   const preparedCandidates = candidates.map(prepareMatchableJob);
 
@@ -168,6 +191,7 @@ export function attachAppliedDuplicateMatches<T extends Job | JobListItem>(
       appliedDuplicateMatch: findAppliedDuplicateMatchFromPreparedJobs(
         preparedJob,
         preparedCandidates,
+        config,
       ),
     };
   });

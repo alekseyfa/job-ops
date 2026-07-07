@@ -175,7 +175,7 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 - Initialized at startup from `orchestrator/src/server/index.ts` via `initializeStaleJobsCleanup()`. Look for "Stale job cleanup scheduler started" in the logs to verify it's running after restart.
 
 ### Pipeline Step Ordering
-- Order: `discoverJobs` → `preImportLiveness` → `importJobs` → `filterRelocation` → `filterAntiDomain` → `filterGhostJobs` → `checkLiveness` → `scoreJobs` (LLM, with per-job transient-failure skip + ≥30% failure-rate pause) → `selectJobs` → `processJobs`.
+- Order: `discoverJobs` → `preImportLiveness` → `importJobs` → `filterRelocation` → `filterAppliedDuplicates` → `filterAntiDomain` → `filterGhostJobs` → `checkLiveness` → `scoreJobs` (LLM, with per-job transient-failure skip + ≥30% failure-rate pause) → `selectJobs` → `processJobs`.
 - Auto-skip-below-threshold runs **inside** `scoreJobsStep` (single source of truth, reading `autoSkipScoreThreshold` with `pipelineAutoSkipBelow` as a legacy fallback). Do not add a second pass in `orchestrator.ts` — that was the May 2026 double-apply bug.
 - Registered in `orchestrator/src/server/pipeline/steps/index.ts`; invoked in `orchestrator/src/server/pipeline/orchestrator.ts`.
 - **Step dependency map** — useful when you're about to delete or refactor a file:
@@ -185,6 +185,9 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
   importJobs          ← jobsRepo.createJobs (dedup by URL)
   filterRelocation    ← jobsRepo.getUnscoredDiscoveredJobs + markJobsSkippedWithReason
                         + services/relocation-filter.ts
+  filterAppliedDuplicates ← jobsRepo.{getUnscoredDiscoveredJobs, getAppliedDuplicateMatchCandidates,
+                        markJobsSkippedWithReason} + services/applied-duplicate-matching.ts
+                        + services/settings.ts (skipAppliedDuplicates / threshold / windowDays)
   filterAntiDomain    ← jobsRepo.{getUnscoredDiscoveredJobs, markJobsSkippedWithReason}
                         + services/job-screening.ts + services/resume-keywords-loader.ts
                         ← repositories/design-resume.ts
@@ -209,6 +212,7 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 - **Companion unit tests must stay green:** `job-screening.test.ts` (anti-domain + language gate + resume signal), `relocation-filter.test.ts` (Munich-or-remote predicate). These pin the heuristics that the pipeline steps wrap. If you change the underlying logic, update the tests in the same commit. Run them under Docker per the validation block above before reporting any pipeline-related change as done.
 - **Filter-rate sanity bands (production, ~1500–2500 discovered/day):** if your change causes a pipeline run to drift outside these, something is broken (either you disabled a filter, the resume keyword loader is failing silently, or location intent is misrouted):
   - `filterRelocation` typically skips **30–55%** of imported jobs.
+  - `filterAppliedDuplicates` skips a **small, spiky** share (often 0; higher after heavy application weeks). It only fires once the user has `applied`/`in_progress` history, so early-onboarding runs skip 0 — that's expected, not a regression.
   - `filterAntiDomain` (domain + language + signal combined) typically skips **5–20%** of remaining jobs.
   - `scoreJobs` typically keeps **200–500** jobs per run; >80% of imported jobs reaching the LLM means a pre-filter is broken.
   - `scoring transientFailures` should be **0–5%** in normal operation. ≥30% triggers an automatic pipeline pause and Telegram notification with `Resume`/`Cancel` choice.
@@ -248,6 +252,14 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 - `orchestrator/src/server/pipeline/steps/filter-relocation.ts` — pipeline step that demotes discovered jobs requiring relocation to `skipped` status with reason `RELOCATION_SKIP_REASON`. Marks rather than deletes so users can still inspect them in "All Jobs".
 - **Country-only locations require `isRemote=true`.** A job with location="United States" and `isRemote=false/null` is treated as relocation (lazy posting at company HQ). A job with location="United States" and `isRemote=true` passes. City-level locations remain authoritative regardless of `isRemote` flag.
 - **Already multi-tenant via settings** (see **`## Mandatory: Multi-User First Design`**). The remaining genuine single-tenant debt in the pipeline is `ANTI_DOMAIN_PATTERNS` in `services/job-screening.ts` (one user's career anti-list), NOT this filter. When you parameterise anti-domain, mirror the relocation approach: a runtime config built from a per-user setting, not module-scope constants.
+
+### Applied-Duplicate Filter (auto-skip reposts of already-applied jobs)
+- **Problem it solves:** the same vacancy is routinely re-listed weeks later or cross-posted to a board we crawl on a different day, so it slips past the exact-URL dedup and floods the feed again. This step skips reposts of roles the user already `applied` to or is `in_progress` on — before scoring, so they never burn LLM budget.
+- Pure matcher (already existed, now config-parameterised): `orchestrator/src/server/services/applied-duplicate-matching.ts` — `findAppliedDuplicateMatch(job, candidates, config?)`. Match = title AND employer similarity **> threshold** (default 90) AND the discovered job appeared within `windowMs` of the original `appliedAt`. Reuses `calculateSimilarity` / `normalizeJobTitle` / `normalizeCompanyName` from `shared/src/job-matching.ts`, so it agrees with cross-posting dedup. `attachAppliedDuplicateMatches` (web API job-detail badge) uses the same matcher with default config — do NOT fork the logic.
+- Pipeline step: `orchestrator/src/server/pipeline/steps/filter-applied-duplicates.ts` → `filterAppliedDuplicatesStep`. Reads `getAppliedDuplicateMatchCandidates()` (applied/in_progress with `appliedAt`), marks matches `skipped` with `APPLIED_DUPLICATE_SKIP_REASON`. Runs **after relocation, before anti-domain**. Marks rather than deletes.
+- **Settings-driven, multi-tenant safe:** `skipAppliedDuplicates` (bool, default true), `appliedDuplicateThreshold` (default 90), `appliedDuplicateWindowDays` (default 30) in `shared/src/settings-registry.ts`. No hardcoded user data — the candidate history is read from the DB, thresholds from settings.
+- **Window is a deliberate accuracy guard:** beyond `appliedDuplicateWindowDays` a re-listing is treated as a genuinely new opening (companies re-open roles), so it is scored normally. Don't remove the window to "catch more" — that's how you skip real new openings.
+- Surfaced in the Telegram run summary (`notifications.ts → buildCompletionMessage`) as "🔁 Already applied (reposted): N", and in `PipelineFilterMetrics.appliedDuplicateSkipped`.
 
 ### Extractors
 - Each extractor is a workspace package in `extractors/<name>/`
