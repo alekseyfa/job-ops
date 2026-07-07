@@ -857,6 +857,86 @@ export const settingsRegistry = {
     serialize: serializeBitBool,
   },
 
+  // --- Smart Apply Answer Profile ---
+  // Reusable answers to the questions almost every application asks that are
+  // NOT on the resume: profile links, notice period, salary, years of
+  // experience, sponsorship, demographic (EEO) handling. Smart Apply's prefill
+  // reads these so the user stops re-typing the same values on every form.
+  //
+  // Multi-tenant: all defaults are neutral/empty. Nothing here encodes the
+  // production candidate — each user fills their own via Settings.
+  applyLinkedinUrl: {
+    kind: "typed" as const,
+    schema: z.string().trim().max(300),
+    default: (): string | null => null,
+    parse: parseNonEmptyStringOrNull,
+    serialize: (value: string | null | undefined): string | null =>
+      value ?? null,
+  },
+  applyGithubUrl: {
+    kind: "typed" as const,
+    schema: z.string().trim().max(300),
+    default: (): string | null => null,
+    parse: parseNonEmptyStringOrNull,
+    serialize: (value: string | null | undefined): string | null =>
+      value ?? null,
+  },
+  applyPortfolioUrl: {
+    kind: "typed" as const,
+    schema: z.string().trim().max(300),
+    default: (): string | null => null,
+    parse: parseNonEmptyStringOrNull,
+    serialize: (value: string | null | undefined): string | null =>
+      value ?? null,
+  },
+  applyNoticePeriod: {
+    kind: "typed" as const,
+    schema: z.string().trim().max(100),
+    default: (): string | null => null,
+    parse: parseNonEmptyStringOrNull,
+    serialize: (value: string | null | undefined): string | null =>
+      value ?? null,
+  },
+  applyDesiredSalary: {
+    kind: "typed" as const,
+    schema: z.string().trim().max(100),
+    default: (): string | null => null,
+    parse: parseNonEmptyStringOrNull,
+    serialize: (value: string | null | undefined): string | null =>
+      value ?? null,
+  },
+  applyYearsExperience: {
+    kind: "typed" as const,
+    schema: z.number().int().min(0).max(60),
+    default: (): number | null => null,
+    parse: (raw: string | undefined): number | null => {
+      if (!raw || raw === "null" || raw === "") return null;
+      const parsed = parseInt(raw, 10);
+      return Number.isNaN(parsed) ? null : Math.min(60, Math.max(0, parsed));
+    },
+    serialize: serializeNullableNumber,
+  },
+  // Tri-state on purpose: null = leave blank (user reviews it per job), true =
+  // "I need sponsorship", false = "I do not need sponsorship". Only opt in when
+  // the answer is genuinely constant across your target market.
+  applyRequiresVisaSponsorship: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean | null => null,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
+  // When true, demographic / EEO questions (gender, race, veteran, disability)
+  // default to the "Decline to self-identify" option, which every compliant
+  // ATS offers. The user can still change it in the browser before submitting.
+  applyDeclineDemographics: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean => true,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
+
   // --- Pipeline Scheduling ---
   pipelineScheduleEnabled: {
     kind: "typed" as const,

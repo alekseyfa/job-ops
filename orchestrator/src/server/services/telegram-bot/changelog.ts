@@ -37,6 +37,23 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.18.0",
+    date: "2026-07-07",
+    items: [
+      {
+        title: "🧾 Apply Profile — stop re-typing the same answers",
+        description:
+          "Smart Apply now fills the questions almost every form asks that aren't on your resume: LinkedIn, GitHub, portfolio, notice period, desired salary, years of experience, visa sponsorship, and diversity questions. Set them once and every application is pre-filled.",
+        tip: "Open Settings → 🧾 Apply Profile and fill in your details. Leave anything blank to keep answering it per job.",
+      },
+      {
+        title: "🛡️ Safe by design",
+        description:
+          "\"Are you authorized to work in <country>?\" is never auto-answered — it depends on the job's country, so you always confirm it yourself. Sponsorship and diversity answers are pre-selected but shown for your review before you submit.",
+      },
+    ],
+  },
+  {
     version: "1.17.0",
     date: "2026-05-19",
     items: [

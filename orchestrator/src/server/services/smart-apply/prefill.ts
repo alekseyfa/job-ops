@@ -17,7 +17,14 @@ import { existsSync } from "node:fs";
 import { logger } from "@infra/logger";
 import { getCandidateBasics, getCandidateNameParts } from "../candidate-profile";
 import { safeFilePart } from "../pdf-storage";
+import { getEffectiveSettings } from "../settings";
 import type { Job } from "@shared/types";
+import {
+  type AnswerProfile,
+  buildAnswerProfileFromSettings,
+  EMPTY_ANSWER_PROFILE,
+  resolveProfileField,
+} from "./answer-profile";
 import {
   type FieldValue,
   type FormField,
@@ -50,6 +57,36 @@ interface PrefillContext {
   job: Pick<Job, "id" | "employer" | "title" | "pdfPath" | "coverLetterPdfPath">;
   basics: Awaited<ReturnType<typeof getCandidateBasics>>;
   nameParts: Awaited<ReturnType<typeof getCandidateNameParts>>;
+  profile: AnswerProfile;
+}
+
+/**
+ * Map reusable, non-resume answers (profile links, notice period, salary,
+ * years, sponsorship, EEO decline) from the user's Apply Profile. This is what
+ * stops the user re-typing the same answers on every application. Returns null
+ * when the profile has no confident answer for this field, so the caller falls
+ * through to attachBasic / defaultUnfilled.
+ */
+function attachProfile(
+  field: FormField,
+  ctx: PrefillContext,
+): PrefilledField | null {
+  if (field.type === "file") return null;
+  const resolved = resolveProfileField(field, ctx.profile);
+  if (!resolved) return null;
+  return {
+    selector: field.selector,
+    label: field.label,
+    normalizedLabel: field.normalizedLabel,
+    type: field.type,
+    required: field.required,
+    value: resolved.value,
+    filled: true,
+    // Sponsorship + demographic answers are pre-selected but the user should
+    // still confirm them; the note tells them so. Links/salary/notice are safe.
+    requiresReview: false,
+    note: resolved.note,
+  };
 }
 
 function attachResume(
@@ -142,12 +179,8 @@ function attachBasic(field: FormField, ctx: PrefillContext): PrefilledField | nu
   if (labelMatches(field, ["phone", "mobile", "telefon", "telephone"]) || field.type === "tel") {
     return makeText(field, ctx.basics.phone, "Phone from your resume.");
   }
-  if (labelMatches(field, ["linkedin", "linkedin profile", "linkedin url"])) {
-    return makeText(field, null, "We don't store LinkedIn on the resume — fill in if needed.");
-  }
-  if (labelMatches(field, ["website", "portfolio", "personal site"])) {
-    return makeText(field, null, "Personal website — fill in if applicable.");
-  }
+  // LinkedIn / GitHub / portfolio links come from the Apply Profile
+  // (attachProfile), not the resume — handled before this fallback.
   if (
     labelMatches(field, [
       "city",
@@ -219,11 +252,22 @@ export async function buildPrefilledForm(args: {
 }): Promise<PrefilledForm> {
   const basics = await getCandidateBasics();
   const nameParts = await getCandidateNameParts();
-  const ctx: PrefillContext = { job: args.job, basics, nameParts };
+  let profile: AnswerProfile;
+  try {
+    profile = buildAnswerProfileFromSettings(await getEffectiveSettings());
+  } catch (err) {
+    // Never let a settings read failure break prefill — degrade to resume-only.
+    logger.warn("Smart Apply prefill: failed to load answer profile", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    profile = EMPTY_ANSWER_PROFILE;
+  }
+  const ctx: PrefillContext = { job: args.job, basics, nameParts, profile };
 
   const fields: PrefilledField[] = args.schema.fields.map((field) => {
     const prefilled = (
       attachResume(field, ctx) ||
+      attachProfile(field, ctx) ||
       attachBasic(field, ctx) ||
       defaultUnfilled(field)
     );

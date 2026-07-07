@@ -138,6 +138,17 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
   - **No auto-submit** — the user submits manually in the noVNC viewer. We detect submission by watching the page URL transition to a success route.
 - Eligibility = source `greenhouse`/`ashby` OR URL matches the regexes in `eligibility.ts`. To extend to a new ATS, add a parser + eligibility branch — do NOT touch session.ts.
 
+### Smart Apply Answer Profile (reusable non-resume answers)
+- **Purpose:** the single biggest apply-speed lever. Forms keep asking the same non-resume questions (LinkedIn/GitHub/portfolio URLs, notice period, desired salary, years of experience, visa sponsorship, EEO/demographics). Instead of the user re-typing them on every application, `prefill.ts` reads them from a per-user profile and fills them automatically.
+- Pure logic in `orchestrator/src/server/services/smart-apply/answer-profile.ts` — `buildAnswerProfileFromSettings(settings)` + `resolveProfileField(field, profile)`. No IO/DB/LLM; unit-tested in `answer-profile.test.ts`. `prefill.ts` calls `attachProfile()` in the map chain **after `attachResume`, before `attachBasic`** (so profile links win over the generic name/website heuristics).
+- Backed by `apply*` settings in `shared/src/settings-registry.ts` (`applyLinkedinUrl`, `applyGithubUrl`, `applyPortfolioUrl`, `applyNoticePeriod`, `applyDesiredSalary`, `applyYearsExperience`, `applyRequiresVisaSponsorship`, `applyDeclineDemographics`). All defaults are neutral/empty → **multi-tenant safe** (a second user just fills their own; no code edit). New keys were also added to `AppSettings` (`shared/src/types/settings.ts`) and the `createAppSettings` test factory.
+- Editable from Telegram: **Settings → 🧾 Apply Profile** (`x:ap` in `handlers/settings.ts`), data-driven via `APPLY_PROFILE_FIELDS`. Text fields prompt via `awaitingInput` (`settings:ap:<shortKey>`), booleans/tri-state cycle in place.
+- **Safety invariants — preserve these:**
+  - **Work-authorization is NEVER auto-answered** ("are you authorized to work in <country>?"). On a worldwide search the answer is country-dependent and a wrong blanket yes/no is a legal-misrepresentation risk. Those stay `requiresReview`.
+  - **Visa sponsorship is opt-in tri-state** (`null` = leave blank). `resolveSponsorshipAnswer()` detects question polarity so "do you require sponsorship?" and "authorized to work WITHOUT sponsorship?" get opposite booleans.
+  - **Demographics default to "Decline to self-identify"** only when `applyDeclineDemographics` is on AND the option exists (`pickDeclineOption`).
+  - These pre-selected answers are still surfaced for user confirmation via the field `note` — the user submits manually in the noVNC viewer.
+
 ### Pipeline Scheduler
 - File: `orchestrator/src/server/services/pipeline-scheduler.ts`
 - **Periodic-check pattern, NOT a long `setTimeout`.** Reason: long timeouts don't survive Docker pause/resume, host sleep, or wall-clock changes. Previous setTimeout-based scheduler fired hours late in production.
