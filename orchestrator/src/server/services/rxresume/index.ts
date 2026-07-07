@@ -3,6 +3,8 @@ import { getSetting } from "@server/repositories/settings";
 import { getOriginalEnvValue } from "@server/services/envSettings";
 import { pickProjectIdsForJob } from "@server/services/projectSelection";
 import { resolveResumeProjectsSettings } from "@server/services/resumeProjects";
+import { buildProvenanceIndex } from "@server/services/tailoring-provenance";
+import { settingsRegistry } from "@shared/settings-registry";
 import {
   resolveTracerPublicBaseUrl,
   rewriteResumeLinksWithTracer,
@@ -12,11 +14,13 @@ import {
   getResumeSchemaValidationMessage,
   safeParseV5ResumeData,
 } from "./schema";
+import { collapseToSingleColumn } from "./single-column";
 import {
   applyProjectVisibility,
   applyTailoredChunks,
   cloneResumeData,
   extractProjectsFromResume as extractProjectsFromResumeV5,
+  type TailoredExperienceEntryInput,
   type TailoredSkillsInput,
 } from "./tailoring";
 import * as v5 from "./v5";
@@ -380,6 +384,7 @@ export async function prepareTailoredResumeForPdf(args: {
     summary?: string | null;
     headline?: string | null;
     skills?: TailoredSkillsInput;
+    experience?: TailoredExperienceEntryInput[] | null;
   };
   jobDescription: string;
   selectedProjectIds?: string | null;
@@ -397,10 +402,23 @@ export async function prepareTailoredResumeForPdf(args: {
   }
 
   const workingCopy = cloneResumeData(parsed.data as Record<string, unknown>);
+  // WS1 truthfulness guard: build the provenance index from the BASE resume
+  // (parsed.data) so injected skill keywords that the candidate doesn't
+  // actually have are dropped before they reach the rendered PDF.
+  const provenanceIndex = buildProvenanceIndex(parsed.data);
   applyTailoredChunks({
     resumeData: workingCopy,
     tailoredContent: args.tailoredContent,
+    provenanceIndex,
   });
+
+  // WS1-T4: collapse the two-column layout into a single column for ATS
+  // parseability — ONLY for tailored job PDFs (this function), never the
+  // editable base/design resume. Behind a default-off setting with rollback.
+  const singleColumnRaw = await getSetting("tailoredPdfSingleColumn");
+  if (settingsRegistry.tailoredPdfSingleColumn.parse(singleColumnRaw ?? undefined)) {
+    collapseToSingleColumn(workingCopy);
+  }
 
   const { catalog, selectionItems } = extractProjectsFromResumeV5(workingCopy);
 

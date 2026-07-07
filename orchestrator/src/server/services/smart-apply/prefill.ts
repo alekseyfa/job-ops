@@ -222,19 +222,29 @@ export async function buildPrefilledForm(args: {
   const ctx: PrefillContext = { job: args.job, basics, nameParts };
 
   const fields: PrefilledField[] = args.schema.fields.map((field) => {
-    return (
+    const prefilled = (
       attachResume(field, ctx) ||
       attachBasic(field, ctx) ||
       defaultUnfilled(field)
     );
+    // Preserve hint from the parsed schema for essay drafting.
+    if (field.hint) {
+      prefilled.hint = field.hint;
+    }
+    return prefilled;
   });
 
   const reviewRequiredCount = fields.filter((f) => f.requiresReview).length;
+  const essayFields = fields.filter(
+    (f) => f.type === "textarea" && f.requiresReview,
+  );
+
   logger.info("Smart Apply prefill ready", {
     ats: args.schema.ats,
     fields: fields.length,
     autoFilled: fields.filter((f) => f.filled).length,
     requiresReview: reviewRequiredCount,
+    essayFields: essayFields.length,
   });
 
   return {
@@ -242,5 +252,6 @@ export async function buildPrefilledForm(args: {
     applyUrl: args.schema.applyUrl,
     fields,
     reviewRequiredCount,
+    essayFields,
   };
 }

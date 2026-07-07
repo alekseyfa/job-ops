@@ -46,6 +46,11 @@ export interface TailoredPdfContent {
   summary?: string | null;
   headline?: string | null;
   skills?: Array<{ name: string; keywords: string[] }> | null;
+  experience?: Array<{
+    company: string;
+    position: string;
+    bullets: string[];
+  }> | null;
 }
 
 export interface GeneratePdfOptions {

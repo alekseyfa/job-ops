@@ -101,7 +101,7 @@ The repo serves one user today, but every change MUST behave correctly when a **
 
 **Known single-tenant debt — do NOT extend**:
 
-- `services/relocation-filter.ts`: `MUNICH_KEYWORDS`, `ALLOWED_REGION_SUBSTRINGS`, `DISALLOWED_REGION_SUBSTRINGS` encode "Munich-based EU-resident candidate".  A Tokyo-based candidate would invert allow / disallow.  When generalising, take `homeCities` + `allowedRegions` + `disallowedRegions` parameters defaulted from a setting (`userHomeCities` / `userAllowedRegions`) and parameterise the existing tests.
+- `services/relocation-filter.ts`: **ALREADY generalised — not debt.** `requiresRelocation(job, config)` takes a runtime `RelocationFilterConfig` (`homeCities` + `accessibleRegions`) built by `relocation-filter-config.ts` from the `relocationHomeCities` / `relocationAccessibleRegions` settings (`shared/src/settings-registry.ts`). The shipped defaults encode a Munich/EU candidate, but a Tokyo-based user just changes the settings — no code edit. Do not "re-fix" this by re-introducing module-scope constants.
 - `services/job-screening.ts`: `ANTI_DOMAIN_PATTERNS` lists career classes the production candidate is not pursuing (medical billing, ERP consulting, recruiting, …).  Tolerable today because these are orthogonal to most engineering candidates, but a user with the opposite trajectory (e.g. a recruiter looking for recruiter roles) would need an inverted list.  Generalise via a per-user "career anti-pattern" setting when the second user arrives.
 
 **Before merging, ask**:
@@ -164,7 +164,7 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 - Initialized at startup from `orchestrator/src/server/index.ts` via `initializeStaleJobsCleanup()`. Look for "Stale job cleanup scheduler started" in the logs to verify it's running after restart.
 
 ### Pipeline Step Ordering
-- Order: `discoverJobs` → `preImportLiveness` → `importJobs` → `filterRelocation` → `filterAntiDomain` → `checkLiveness` → `scoreJobs` (LLM, with per-job transient-failure skip + ≥30% failure-rate pause) → `selectJobs` → `processJobs`.
+- Order: `discoverJobs` → `preImportLiveness` → `importJobs` → `filterRelocation` → `filterAntiDomain` → `filterGhostJobs` → `checkLiveness` → `scoreJobs` (LLM, with per-job transient-failure skip + ≥30% failure-rate pause) → `selectJobs` → `processJobs`.
 - Auto-skip-below-threshold runs **inside** `scoreJobsStep` (single source of truth, reading `autoSkipScoreThreshold` with `pipelineAutoSkipBelow` as a legacy fallback). Do not add a second pass in `orchestrator.ts` — that was the May 2026 double-apply bug.
 - Registered in `orchestrator/src/server/pipeline/steps/index.ts`; invoked in `orchestrator/src/server/pipeline/orchestrator.ts`.
 - **Step dependency map** — useful when you're about to delete or refactor a file:
@@ -177,6 +177,8 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
   filterAntiDomain    ← jobsRepo.{getUnscoredDiscoveredJobs, markJobsSkippedWithReason}
                         + services/job-screening.ts + services/resume-keywords-loader.ts
                         ← repositories/design-resume.ts
+  filterGhostJobs     ← jobsRepo.{getUnscoredDiscoveredJobs, markJobsSkippedWithReason}
+                        + services/ghost-job-detector.ts (assessJobLegitimacy, "red" tier)
   checkLiveness       ← HTTP HEAD + jobsRepo.markExpired
   scoreJobs           ← services/scorer.ts (LLM) + services/llm-errors.ts
                         + visa-sponsors + ghost-job-detector
@@ -231,10 +233,10 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 
 ### Relocation Filter (Munich-or-remote)
 - The current user is in Munich and does NOT relocate. Pipeline auto-skips listings that aren't in the Munich metro and aren't genuinely remote.
-- `orchestrator/src/server/services/relocation-filter.ts` — `requiresRelocation(job)` predicate. Hard-coded Munich-area keyword list (München / Garching / Gräfelfing / Unterföhring / Kirchheim / Germering / Aschheim / Ottobrunn / Planegg / Martinsried / Neubiberg / Haar / Ismaning / Oberhaching / Vaterstetten / Putzbrunn / Pullach / Taufkirchen) + country-only allow-list ("Germany"/"NL"/"Europe"/"DE"/...) + explicit remote markers ("Remote"/"Anywhere"/"Home Office"/"Telearbeit"/"Werk van thuis").
+- `orchestrator/src/server/services/relocation-filter.ts` — `requiresRelocation(job, config)` predicate. The home-city keyword list and accessible regions come from the `RelocationFilterConfig` argument, NOT module constants. `orchestrator/src/server/services/relocation-filter-config.ts` builds that config at runtime from the `relocationHomeCities` + `relocationAccessibleRegions` settings (`shared/src/settings-registry.ts`). Shipped defaults encode a Munich/EU candidate (München / Garching / Unterföhring / … + country-only allow-list + remote markers like "Remote"/"Home Office"/"Telearbeit"), but changing the settings re-targets it to any city with no code change.
 - `orchestrator/src/server/pipeline/steps/filter-relocation.ts` — pipeline step that demotes discovered jobs requiring relocation to `skipped` status with reason `RELOCATION_SKIP_REASON`. Marks rather than deletes so users can still inspect them in "All Jobs".
 - **Country-only locations require `isRemote=true`.** A job with location="United States" and `isRemote=false/null` is treated as relocation (lazy posting at company HQ). A job with location="United States" and `isRemote=true` passes. City-level locations remain authoritative regardless of `isRemote` flag.
-- Currently single-tenant (Munich is hard-coded). If you generalize to other cities, parameterize the keyword list and remove the hard-coded constants — do NOT add per-tenant settings flags until that's actually needed. See **`## Mandatory: Multi-User First Design`** above for the broader rule that governs this single-tenant carve-out — when generalising, take `homeCities` + `allowedRegions` + `disallowedRegions` parameters defaulted from settings, not new module-scope constants.
+- **Already multi-tenant via settings** (see **`## Mandatory: Multi-User First Design`**). The remaining genuine single-tenant debt in the pipeline is `ANTI_DOMAIN_PATTERNS` in `services/job-screening.ts` (one user's career anti-list), NOT this filter. When you parameterise anti-domain, mirror the relocation approach: a runtime config built from a per-user setting, not module-scope constants.
 
 ### Extractors
 - Each extractor is a workspace package in `extractors/<name>/`
@@ -261,6 +263,8 @@ If (1)-(3) is "no" because the predicate is logically single-tenant: put the use
 ### PDF Generation
 - Two renderers: `rxresume` (default) and `latex`
 - ATS text normalization applied in `orchestrator/src/server/services/rxresume/tailoring.ts`
+- **Per-vacancy ATS tailoring (WS1), all behind default-OFF settings:** the scorer's match analysis is fed into tailoring (no more "keyword stuffing"); a provenance guard (`services/tailoring-provenance.ts`) drops any injected skill/keyword the base resume doesn't support (enforced in `applyTailoredSkills` + `applyTailoredExperience`); experience bullets are rephrased only (flag `tailorExperienceBullets`); tailored job PDFs can render single-column for ATS parseability (flag `tailoredPdfSingleColumn`, tailored PDFs only — never the base/design resume); and a parse-back coverage report (flag `atsCoverageReportEnabled`) reads the rendered PDF back via `pdf-parse` and computes weighted keyword coverage. Tailored content is fingerprinted by JD-hash + `TAILORING_PROMPT_VERSION` so an edited JD or a bumped version auto-re-tailors stale jobs.
+- **ATS coverage % is an INTERNAL HEURISTIC, not a real ATS score.** `pdf-parse` reconstructs reading order with its own rules, which do NOT match Workday/Taleo/Greenhouse parsers. Treat the number as a relative proxy; to validate against a real ATS, follow the manual procedure in `orchestrator/docs/ats-calibration.md`. Do not present coverage % to users as a guaranteed pass-rate.
 
 ## Common Pitfalls
 

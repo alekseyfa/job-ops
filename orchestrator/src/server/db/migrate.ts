@@ -988,6 +988,34 @@ const migrations = [
     ON smart_apply_sessions(tenant_id, job_id)`,
   `CREATE INDEX IF NOT EXISTS idx_smart_apply_sessions_status
     ON smart_apply_sessions(status)`,
+
+  // Phase-1 ATS tailoring (WS1) + cross-posting dedup (WS2).
+  // All additive + nullable (or NOT NULL DEFAULT 0) so existing rows — including
+  // applied/in_progress/ready user-investment jobs — are untouched. The "alter
+  // table jobs add column" duplicate-column tolerance above makes these idempotent.
+  `ALTER TABLE jobs ADD COLUMN tailored_experience TEXT`,
+  `ALTER TABLE jobs ADD COLUMN tailoring_experience_diff TEXT`,
+  `ALTER TABLE jobs ADD COLUMN tailoring_report TEXT`,
+  `ALTER TABLE jobs ADD COLUMN tailoring_fingerprint TEXT`,
+  `ALTER TABLE jobs ADD COLUMN cross_posting_group_id TEXT`,
+  `ALTER TABLE jobs ADD COLUMN is_cross_posting_duplicate INTEGER NOT NULL DEFAULT 0`,
+
+  // Reusable screening-essay answers (WS3), keyed by normalized question per tenant.
+  `CREATE TABLE IF NOT EXISTS screening_answers (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL DEFAULT 'tenant_default',
+    question_normalized TEXT NOT NULL,
+    question_label TEXT NOT NULL,
+    answer TEXT NOT NULL DEFAULT '',
+    source_job_id TEXT,
+    times_used INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_job_id) REFERENCES jobs(id) ON DELETE SET NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_screening_answers_tenant_question_unique
+    ON screening_answers(tenant_id, question_normalized)`,
 ];
 
 console.log("🔧 Running database migrations...");

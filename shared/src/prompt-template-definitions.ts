@@ -32,6 +32,9 @@ Writing style formality: {{formality}}.
     placeholders: [
       "jobDescription",
       "profileJson",
+      "addToResumeKeywords",
+      "missingSkills",
+      "tailoringTips",
       "outputLanguage",
       "tone",
       "formality",
@@ -50,6 +53,11 @@ JOB DESCRIPTION (JD):
 MY PROFILE:
 {{profileJson}}
 
+SCORER SIGNAL (already computed for THIS job — use it, do not re-derive):
+- Priority JD keywords to surface where I genuinely have them: {{addToResumeKeywords}}
+- Gaps the scorer flagged (only surface a gap if my profile truly supports it — never fabricate): {{missingSkills}}
+- Scorer tailoring tips: {{tailoringTips}}
+
 INSTRUCTIONS:
 
 1. "headline" (String):
@@ -66,7 +74,7 @@ INSTRUCTIONS:
 
 3. "skills" (Array of Objects):
    - Review my existing skills section structure.
-   - Keyword Stuffing: Swap synonyms to match the JD exactly (e.g. "TDD" -> "Unit Testing", "ReactJS" -> "React").
+   - Re-label and reorder ONLY skills I already have to match the JD's exact wording (e.g. "Unit Testing" -> "TDD", "ReactJS" -> "React"). Do NOT add any skill or technology that is not already present in MY PROFILE — a fabricated skill fails technical screens.
    - Keep my original skill levels and categories, just rename/reorder keywords to prioritize JD terms.{{maxKeywordsPerSkillLine}}
    - Return the full "items" array for the skills section, preserving the structure: { "name": "Frontend", "keywords": [...] }.
    - Write user-visible skill text in {{outputLanguage}} when natural, but keep exact JD terms, acronyms, and technology names when that helps ATS matching.

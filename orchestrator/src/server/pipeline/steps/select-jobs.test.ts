@@ -68,4 +68,42 @@ describe("selectJobsStep", () => {
 
     expect(selected.map((job) => job.id)).toEqual(["zagreb"]);
   });
+
+  // WS2-T3: selectionMode='rank' bypasses the hard score cutoff so calibration
+  // drift can't empty the list — it returns the top-N by rank regardless.
+  it("returns top-N by rank when selectionMode is 'rank' (ignores the cutoff)", async () => {
+    const settingsRepo = await import("@server/repositories/settings");
+    vi.mocked(settingsRepo.getAllSettings).mockResolvedValue({
+      selectionMode: "rank",
+    } as any);
+
+    // All jobs are BELOW the minSuitabilityScore (50) — under 'threshold' the
+    // result would be empty; under 'rank' we still get the best two.
+    const jobs = [
+      { id: "a", suitabilityScore: 40, suitabilityReason: "best" },
+      { id: "b", suitabilityScore: 20, suitabilityReason: "mid" },
+      { id: "c", suitabilityScore: 10, suitabilityReason: "low" },
+      { id: "unscored", suitabilityScore: null, suitabilityReason: null },
+    ] as any;
+
+    const selected = await selectJobsStep({
+      scoredJobs: jobs,
+      mergedConfig: baseConfig, // topN: 2, minSuitabilityScore: 50
+    });
+
+    expect(selected.map((job) => job.id)).toEqual(["a", "b"]);
+  });
+
+  it("returns an empty list for the same below-cutoff jobs under default 'threshold' mode", async () => {
+    const settingsRepo = await import("@server/repositories/settings");
+    vi.mocked(settingsRepo.getAllSettings).mockResolvedValue({} as any);
+
+    const jobs = [
+      { id: "a", suitabilityScore: 40, suitabilityReason: "best" },
+      { id: "b", suitabilityScore: 20, suitabilityReason: "mid" },
+    ] as any;
+
+    const selected = await selectJobsStep({ scoredJobs: jobs, mergedConfig: baseConfig });
+    expect(selected).toEqual([]);
+  });
 });

@@ -164,6 +164,22 @@ export const jobs = sqliteTable(
     tailoredSummary: text("tailored_summary"),
     tailoredHeadline: text("tailored_headline"),
     tailoredSkills: text("tailored_skills"),
+    // Phase-1 ATS tailoring (WS1): per-vacancy experience rewriting + a parse-back
+    // coverage report + a fingerprint used to invalidate stale tailored content.
+    // All nullable/additive — inert until the WS1 feature flags are enabled.
+    tailoredExperience: text("tailored_experience"),
+    tailoringExperienceDiff: text("tailoring_experience_diff", { mode: "json" }),
+    tailoringReport: text("tailoring_report", { mode: "json" }),
+    tailoringFingerprint: text("tailoring_fingerprint"),
+    // Cross-posting dedup (WS2): the canonical group key and a flag marking the
+    // non-canonical copy. We MARK rather than delete so user-investment jobs are
+    // never removed (see "don't delete applied/in_progress/ready" invariant).
+    crossPostingGroupId: text("cross_posting_group_id"),
+    isCrossPostingDuplicate: integer("is_cross_posting_duplicate", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     selectedProjectIds: text("selected_project_ids"),
     pdfPath: text("pdf_path"),
     coverLetterText: text("cover_letter_text"),
@@ -712,6 +728,36 @@ export const smartApplySessions = sqliteTable(
   }),
 );
 
+// Reusable screening-essay answers (WS3). When the user answers a free-text
+// application question, we persist it keyed by the normalized question text so
+// a similar future question can auto-suggest the previous answer. Per-tenant.
+export const screeningAnswers = sqliteTable(
+  "screening_answers",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .default("tenant_default")
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    questionNormalized: text("question_normalized").notNull(),
+    questionLabel: text("question_label").notNull(),
+    answer: text("answer").notNull().default(""),
+    // Null (not cascade-delete) so deleting the originating job keeps the answer
+    // available for reuse on future applications.
+    sourceJobId: text("source_job_id").references(() => jobs.id, {
+      onDelete: "set null",
+    }),
+    timesUsed: integer("times_used").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+    updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
+  },
+  (table) => ({
+    tenantQuestionUnique: uniqueIndex(
+      "idx_screening_answers_tenant_question_unique",
+    ).on(table.tenantId, table.questionNormalized),
+  }),
+);
+
 export const interviewStories = sqliteTable(
   "interview_stories",
   {
@@ -906,3 +952,5 @@ export type InterviewQuestionRow = typeof interviewQuestions.$inferSelect;
 export type NewInterviewQuestionRow = typeof interviewQuestions.$inferInsert;
 export type SmartApplySessionRow = typeof smartApplySessions.$inferSelect;
 export type NewSmartApplySessionRow = typeof smartApplySessions.$inferInsert;
+export type ScreeningAnswerRow = typeof screeningAnswers.$inferSelect;
+export type NewScreeningAnswerRow = typeof screeningAnswers.$inferInsert;

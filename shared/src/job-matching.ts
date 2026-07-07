@@ -3,6 +3,7 @@ import {
   matchesRequestedCountry,
   shouldApplyStrictCityFilter,
 } from "./search-cities.js";
+import type { CreateJobInput } from "./types";
 import type { LocationIntent } from "./types/location";
 import { normalizeWhitespace } from "./utils/string";
 
@@ -186,4 +187,95 @@ export function matchJobLocationIntent(
   }
 
   return { matched: false, reasonCode: "no_match", priority: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// Cross-posting / near-duplicate detection (WS2)
+//
+// The same role is routinely posted to several boards at once (LinkedIn +
+// Indeed + the company's Greenhouse page). Keyed only on the exact URL these
+// become distinct jobs, so the same vacancy gets scored multiple times
+// (wasted LLM budget) and floods the curated list. These helpers collapse
+// such cross-posts to one canonical posting, preferring the direct-ATS URL.
+// Pure and IO-free.
+// ---------------------------------------------------------------------------
+
+/** ATS sources whose URLs we prefer as the canonical posting (apply directly). */
+const DIRECT_ATS_SOURCES = new Set<string>([
+  "greenhouse",
+  "ashby",
+  "lever",
+  "workday",
+  "smartrecruiters",
+]);
+
+const ATS_URL_RE = /(greenhouse|ashby|lever|myworkdayjobs|smartrecruiters)\./i;
+
+/**
+ * Fingerprint a job by normalized title + employer + location. Two jobs with
+ * the same fingerprint are treated as the same vacancy cross-posted to
+ * different boards. Returns null when title or employer is missing — we never
+ * collapse jobs we cannot confidently identify. Reuses normalizeJobTitle +
+ * normalizeCompanyName so the fingerprint agrees with the rest of matching.
+ */
+export function crossPostingFingerprint(
+  job: Pick<CreateJobInput, "title" | "employer" | "location">,
+): string | null {
+  const title = normalizeJobTitle(job.title ?? "");
+  const employer = normalizeCompanyName(job.employer ?? "");
+  if (!title || !employer) return null;
+  const location = normalizeWhitespace((job.location ?? "").toLowerCase());
+  return `${title}|${employer}|${location}`;
+}
+
+/** True if this job's URL points directly at an ATS application form. */
+export function isDirectAtsPosting(job: CreateJobInput): boolean {
+  if (job.source && DIRECT_ATS_SOURCES.has(job.source)) return true;
+  return ATS_URL_RE.test(job.jobUrl ?? "");
+}
+
+export interface CrossPostingDedupResult {
+  /** One canonical input per detected vacancy (direct-ATS URL preferred). */
+  canonical: CreateJobInput[];
+  /** How many inputs were dropped as cross-posting duplicates. */
+  duplicatesRemoved: number;
+}
+
+/**
+ * Collapse near-duplicate cross-postings in an input batch. Jobs that share a
+ * fingerprint are reduced to one canonical posting (the first direct-ATS URL in
+ * the group, else the first seen). Jobs with no fingerprint always pass through
+ * untouched — we never silently drop something we can't confidently identify.
+ */
+export function dedupeCrossPostings(
+  inputs: CreateJobInput[],
+): CrossPostingDedupResult {
+  const groups = new Map<string, CreateJobInput[]>();
+  const passthrough: CreateJobInput[] = [];
+
+  for (const input of inputs) {
+    const fp = crossPostingFingerprint(input);
+    if (!fp) {
+      passthrough.push(input);
+      continue;
+    }
+    const group = groups.get(fp);
+    if (group) group.push(input);
+    else groups.set(fp, [input]);
+  }
+
+  const canonical: CreateJobInput[] = [];
+  let duplicatesRemoved = 0;
+
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      canonical.push(group[0]);
+      continue;
+    }
+    const preferred = group.find(isDirectAtsPosting) ?? group[0];
+    canonical.push(preferred);
+    duplicatesRemoved += group.length - 1;
+  }
+
+  return { canonical: [...passthrough, ...canonical], duplicatesRemoved };
 }

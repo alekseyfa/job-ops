@@ -2,7 +2,7 @@
  * Smart Apply eligibility — given a job, decide whether its apply page can
  * be opened in a headed Firefox session and pre-filled.
  *
- * Today we only support Greenhouse and Ashby.  We additionally require the
+ * Today we support Greenhouse, Ashby, and Lever. We additionally require the
  * apply URL to look like a public form URL (not a tracking redirect, not an
  * internal staging URL) and we refuse if the page bundles a hard captcha.
  *
@@ -15,6 +15,7 @@ import type { EligibilityVerdict, JobApplicabilityContext } from "./types";
 
 const GREENHOUSE_URL_RE = /^https?:\/\/(boards\.greenhouse\.io|job-boards\.greenhouse\.io)\//i;
 const ASHBY_URL_RE = /^https?:\/\/jobs\.ashbyhq\.com\//i;
+const LEVER_URL_RE = /^https?:\/\/jobs\.lever\.co\//i;
 
 function pickApplyUrl(
   ctx: JobApplicabilityContext,
@@ -42,6 +43,10 @@ export function evaluateSmartApplyEligibility(
 
   if (ctx.job.source === "ashby" || ASHBY_URL_RE.test(url)) {
     return { eligible: true, ats: "ashby", applyUrl: url };
+  }
+
+  if (ctx.job.source === "lever" || LEVER_URL_RE.test(url)) {
+    return { eligible: true, ats: "lever", applyUrl: url };
   }
 
   return {

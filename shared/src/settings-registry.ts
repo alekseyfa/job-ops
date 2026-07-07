@@ -374,6 +374,15 @@ export const settingsRegistry = {
     serialize: (value: Array<{ provider: string; slug: string }> | null | undefined): string | null =>
       value !== null && value !== undefined ? JSON.stringify(value) : null,
   },
+  // ATS Board Presets: user activates curated preset collections via preset IDs.
+  // See shared/src/ats-board-presets.ts for the preset catalog (ATS_BOARD_PRESET_CATALOG).
+  activeAtsBoardPresets: {
+    kind: "typed" as const,
+    schema: z.array(z.string().trim().min(1).max(50)).max(20),
+    default: (): string[] => [],
+    parse: parseJsonArrayOrNull,
+    serialize: serializeNullableJsonArray,
+  },
   scoringInstructions: {
     kind: "typed" as const,
     schema: z.string().trim().max(4000),
@@ -782,6 +791,70 @@ export const settingsRegistry = {
     serialize: (value: number | null | undefined): string | null => {
       return value === null || value === undefined ? null : String(value);
     },
+  },
+
+  // --- Phase-1 ATS tailoring + matching flags (every risky feature OFF by
+  // default; each is a single-flip rollback) ---
+  // WS1: render tailored JOB PDFs single-column for max ATS parseability. Does
+  // NOT change the user's editable base/design resume rendering.
+  tailoredPdfSingleColumn: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean => false,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
+  // WS1: page budget for tailored PDFs (used by the one-page trim pass).
+  maxResumePages: {
+    kind: "typed" as const,
+    schema: z.number().int().min(1).max(5),
+    default: (): number => 1,
+    parse: parseIntOrNull,
+    serialize: serializeNullableNumber,
+  },
+  // WS1: rewrite experience bullets per-vacancy (provenance-guarded). Risky —
+  // OFF by default until validated.
+  tailorExperienceBullets: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean => false,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
+  // WS1: parse the rendered PDF back and compute a keyword-coverage report.
+  atsCoverageReportEnabled: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean => false,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
+  // WS1: bump to force re-tailoring of already-processed jobs after a prompt
+  // improvement (feeds the tailoring_fingerprint).
+  tailoringPromptVersion: {
+    kind: "typed" as const,
+    schema: z.number().int().min(1).max(1000),
+    default: (): number => 1,
+    parse: parseIntOrNull,
+    serialize: serializeNullableNumber,
+  },
+  // WS2: job selection mode. "threshold" = current hard minSuitabilityScore
+  // cutoff; "rank" = take top-N by rank to resist scoring drift.
+  selectionMode: {
+    kind: "typed" as const,
+    schema: z.enum(["threshold", "rank"]),
+    default: (): "threshold" | "rank" => "threshold",
+    parse: createEnumParser(["threshold", "rank"]),
+    serialize: (value: "threshold" | "rank" | null | undefined): string | null =>
+      value ?? null,
+  },
+  // WS3: allow the bot to AI-draft screening-essay answers for user review.
+  screeningDraftEnabled: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean => false,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
   },
 
   // --- Pipeline Scheduling ---

@@ -3,6 +3,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { dedupeCrossPostings } from "@shared/job-matching.js";
 import { buildLocationEvidence } from "@shared/location-domain.js";
 import type {
   CreateJobInput,
@@ -16,6 +17,8 @@ import type {
   JobNote,
   JobStatus,
   JobsRevisionResponse,
+  TailoringExperienceDiff,
+  TailoringReport,
   UpdateJobInput,
   UpdateJobNoteInput,
 } from "@shared/types";
@@ -550,10 +553,12 @@ async function tryInsertJob(input: CreateJobInput): Promise<Job | null> {
 export async function createJobs(input: CreateJobInput): Promise<Job>;
 export async function createJobs(
   inputs: CreateJobInput[],
-): Promise<{ created: number; skipped: number }>;
+): Promise<{ created: number; skipped: number; crossPostingDeduplicated: number }>;
 export async function createJobs(
   inputOrInputs: CreateJobInput | CreateJobInput[],
-): Promise<Job | { created: number; skipped: number }> {
+): Promise<
+  Job | { created: number; skipped: number; crossPostingDeduplicated: number }
+> {
   if (!Array.isArray(inputOrInputs)) {
     const inserted = await tryInsertJob(inputOrInputs);
     if (inserted) return inserted;
@@ -561,6 +566,13 @@ export async function createJobs(
     if (existing) return existing;
     throw new Error("Failed to create or resolve existing job by URL");
   }
+
+  // WS2: collapse near-duplicate cross-postings (same role on LinkedIn +
+  // Indeed + the company ATS) to one canonical posting BEFORE the exact-URL
+  // dedup below, so a single vacancy is scored once. Jobs we can't confidently
+  // fingerprint (missing title/employer) pass through untouched.
+  const { canonical, duplicatesRemoved: crossPostingDeduplicated } =
+    dedupeCrossPostings(inputOrInputs);
 
   const byUrl = new Map<
     string,
@@ -570,7 +582,7 @@ export async function createJobs(
     }
   >();
 
-  for (const input of inputOrInputs) {
+  for (const input of canonical) {
     const existing = byUrl.get(input.jobUrl);
     if (existing) {
       existing.count += 1;
@@ -584,7 +596,7 @@ export async function createJobs(
 
   const uniqueUrls = Array.from(byUrl.keys());
   if (uniqueUrls.length === 0) {
-    return { created, skipped };
+    return { created, skipped, crossPostingDeduplicated };
   }
 
   const existingRows = await db
@@ -614,7 +626,7 @@ export async function createJobs(
     skipped += count - 1;
   }
 
-  return { created, skipped };
+  return { created, skipped, crossPostingDeduplicated };
 }
 
 /**
@@ -867,6 +879,13 @@ function mapRowToJob(row: typeof jobs.$inferSelect): Job {
     tailoredSummary: row.tailoredSummary,
     tailoredHeadline: row.tailoredHeadline ?? null,
     tailoredSkills: row.tailoredSkills ?? null,
+    tailoredExperience: row.tailoredExperience ?? null,
+    tailoringExperienceDiff:
+      (row.tailoringExperienceDiff as TailoringExperienceDiff | null) ?? null,
+    tailoringReport: (row.tailoringReport as TailoringReport | null) ?? null,
+    tailoringFingerprint: row.tailoringFingerprint ?? null,
+    crossPostingGroupId: row.crossPostingGroupId ?? null,
+    isCrossPostingDuplicate: row.isCrossPostingDuplicate ?? false,
     selectedProjectIds: row.selectedProjectIds ?? null,
     pdfPath: row.pdfPath,
     coverLetterText: row.coverLetterText ?? null,

@@ -96,6 +96,7 @@ COPY extractors/remotive/package*.json ./extractors/remotive/
 COPY extractors/remoteok/package*.json ./extractors/remoteok/
 COPY extractors/himalayas/package*.json ./extractors/himalayas/
 COPY extractors/hackernews/package*.json ./extractors/hackernews/
+COPY extractors/ziprecruiter/package*.json ./extractors/ziprecruiter/
 COPY extractors/justjoinit/package*.json ./extractors/justjoinit/
 COPY extractors/nofluffjobs/package*.json ./extractors/nofluffjobs/
 COPY extractors/hh-ru/package*.json ./extractors/hh-ru/
@@ -136,6 +137,7 @@ COPY extractors/remotive ./extractors/remotive
 COPY extractors/remoteok ./extractors/remoteok
 COPY extractors/himalayas ./extractors/himalayas
 COPY extractors/hackernews ./extractors/hackernews
+COPY extractors/ziprecruiter ./extractors/ziprecruiter
 COPY extractors/justjoinit ./extractors/justjoinit
 COPY extractors/nofluffjobs ./extractors/nofluffjobs
 COPY extractors/hh-ru ./extractors/hh-ru
@@ -183,6 +185,7 @@ COPY extractors/remotive/package*.json ./extractors/remotive/
 COPY extractors/remoteok/package*.json ./extractors/remoteok/
 COPY extractors/himalayas/package*.json ./extractors/himalayas/
 COPY extractors/hackernews/package*.json ./extractors/hackernews/
+COPY extractors/ziprecruiter/package*.json ./extractors/ziprecruiter/
 COPY extractors/justjoinit/package*.json ./extractors/justjoinit/
 COPY extractors/nofluffjobs/package*.json ./extractors/nofluffjobs/
 COPY extractors/hh-ru/package*.json ./extractors/hh-ru/
@@ -247,6 +250,7 @@ COPY extractors/remotive ./extractors/remotive
 COPY extractors/remoteok ./extractors/remoteok
 COPY extractors/himalayas ./extractors/himalayas
 COPY extractors/hackernews ./extractors/hackernews
+COPY extractors/ziprecruiter ./extractors/ziprecruiter
 COPY extractors/justjoinit ./extractors/justjoinit
 COPY extractors/nofluffjobs ./extractors/nofluffjobs
 COPY extractors/hh-ru ./extractors/hh-ru

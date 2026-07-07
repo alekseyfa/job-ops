@@ -121,6 +121,16 @@ export async function buildCompletionMessage(): Promise<string> {
       `   • 🪞 No keyword overlap with resume: ${fm.noResumeSignalSkipped}`,
     );
   }
+  if (fm.ghostRedSkipped && fm.ghostRedSkipped > 0) {
+    filteredLines.push(
+      `   • 👻 Likely ghost / dead posting: ${fm.ghostRedSkipped}`,
+    );
+  }
+  if (fm.crossPostingDeduplicated && fm.crossPostingDeduplicated > 0) {
+    filteredLines.push(
+      `   • 🔁 Cross-posting duplicates merged: ${fm.crossPostingDeduplicated}`,
+    );
+  }
   if (filteredLines.length > 0) {
     lines.push(`🔧 <b>Pre-scoring filters:</b>`);
     lines.push(...filteredLines);

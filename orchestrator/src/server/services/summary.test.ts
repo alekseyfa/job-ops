@@ -27,8 +27,36 @@ vi.mock("./writing-style", async (importOriginal) => {
 });
 
 import { getSetting } from "../repositories/settings";
-import { generateTailoring } from "./summary";
+import {
+  computeTailoringFingerprint,
+  generateTailoring,
+  TAILORING_PROMPT_VERSION,
+} from "./summary";
 import { getWritingStyle } from "./writing-style";
+
+describe("computeTailoringFingerprint (WS1-T7)", () => {
+  it("is stable for identical inputs", () => {
+    const a = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: false });
+    const b = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: false });
+    expect(a).toBe(b);
+  });
+
+  it("changes when the job description changes", () => {
+    const a = computeTailoringFingerprint({ jobDescription: "JD one", includeExperience: false });
+    const b = computeTailoringFingerprint({ jobDescription: "JD two", includeExperience: false });
+    expect(a).not.toBe(b);
+  });
+
+  it("changes when the experience flag changes", () => {
+    const a = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: false });
+    const b = computeTailoringFingerprint({ jobDescription: "JD", includeExperience: true });
+    expect(a).not.toBe(b);
+  });
+
+  it("exposes a numeric prompt version that callers can bump", () => {
+    expect(typeof TAILORING_PROMPT_VERSION).toBe("number");
+  });
+});
 
 describe("generateTailoring", () => {
   beforeEach(() => {
@@ -264,5 +292,68 @@ describe("generateTailoring", () => {
     expect(prompt).toContain("Maximum 8 keywords per category");
     // "keep under 90 words" is stripped from constraints because summaryMaxWords (35) takes precedence
     expect(prompt).not.toContain("keep under 90 words");
+  });
+
+  // WS1-T1: feed the scorer's match analysis into tailoring + drop the
+  // "Keyword Stuffing" instruction. Also acts as the WS1-T0 baseline guard.
+  describe("matchAnalysis wiring (WS1-T1)", () => {
+    const profile: ResumeProfile = {
+      basics: { name: "Test User", label: "Engineer", summary: "Existing summary" },
+    };
+
+    it("never instructs keyword stuffing (provenance-safe prompt)", async () => {
+      await generateTailoring("Build APIs", profile);
+      const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+      expect(prompt).not.toContain("Keyword Stuffing");
+      expect(prompt).toContain(
+        "Do NOT add any skill or technology that is not already present",
+      );
+    });
+
+    it("renders empty scorer-signal lines when no matchAnalysis is given (baseline)", async () => {
+      await generateTailoring("Build APIs", profile);
+      const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+      // The section header is always present, but the values are empty.
+      expect(prompt).toContain("SCORER SIGNAL");
+      expect(prompt).toContain("Priority JD keywords to surface where I genuinely have them: \n");
+    });
+
+    it("omits the experience instruction unless includeExperience is set", async () => {
+      await generateTailoring("Build APIs", profile);
+      const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+      expect(prompt).not.toContain("EXPERIENCE TAILORING");
+    });
+
+    it("appends the rephrase-only experience instruction when includeExperience is set", async () => {
+      await generateTailoring("Build APIs", profile, null, {
+        includeExperience: true,
+      });
+      const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+      expect(prompt).toContain("EXPERIENCE TAILORING");
+      expect(prompt).toContain("NEVER invent");
+      // Schema must now require an experience array.
+      const schema = callJsonMock.mock.calls.at(-1)?.[0]?.jsonSchema;
+      expect(schema?.schema?.required).toContain("experience");
+    });
+
+    it("injects priority keywords, missing skills, and tips from matchAnalysis", async () => {
+      await generateTailoring("Senior Backend Engineer with Python", profile, {
+        requirements: { met: [], missing: [], partial: [] },
+        skills: {
+          matched: [],
+          missing: ["GraphQL"],
+          transferable: [],
+          bonus: [],
+        },
+        experience: { levelMatch: "match", yearsRequired: null, yearsApparent: null },
+        keywords: { addToResume: ["distributed systems"] },
+        dealBreakers: [],
+        tailoringTips: ["Lead with the payments project"],
+      });
+      const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+      expect(prompt).toContain("distributed systems"); // title-class priority keyword
+      expect(prompt).toContain("GraphQL"); // missing skill surfaced
+      expect(prompt).toContain("Lead with the payments project"); // tailoring tip
+    });
   });
 });
