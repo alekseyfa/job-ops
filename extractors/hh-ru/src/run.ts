@@ -17,7 +17,7 @@ const HH_API_URL = "https://api.hh.ru/vacancies";
 // See: https://github.com/hhru/api/blob/master/docs/general.md
 const HH_USER_AGENT =
   process.env.HHRU_USER_AGENT?.trim() ||
-  "JobOps/1.0 (olga.fadeeva.job@gmail.com)";
+  "JobOps/1.0 (set HHRU_USER_AGENT env var)";
 const DEFAULT_MAX_PER_TERM = 50;
 
 /**

@@ -152,7 +152,7 @@ export function registerBoardHandlers(bot: Bot): void {
           "🌿 <b>Greenhouse</b> — Stripe, Anthropic, Coinbase, Figma...\n" +
           "🔷 <b>Ashby</b> — Notion, Ramp, Linear, Vercel...\n" +
           "🔶 <b>Lever</b> — Netflix, Datadog, Twitch...\n" +
-          '🏢 <b>Workday</b> — BMW, Siemens, Intel, Allianz... (auto-detect!)\n' +
+          '🏢 <b>Workday</b> — BMW, Siemens, Bosch, Allianz... (auto-detect!)\n' +
           '📋 <b>SmartRecruiters</b> — Visa, IKEA, Bosch, Sanofi...',
         { parse_mode: "HTML", reply_markup: keyboard },
       );
@@ -199,7 +199,7 @@ export function registerBoardHandlers(bot: Bot): void {
       await ctx.editMessageText(
         "🏢 <b>Workday</b>\n\n" +
           "Send the <b>company name</b> and I'll find the careers page automatically.\n\n" +
-          "<i>Examples: BMW, Siemens, Intel, Allianz, Munich Re</i>\n\n" +
+          "<i>Examples: BMW, Siemens, Bosch, Allianz, Munich Re</i>\n\n" +
           "Or paste a full Workday URL:\n" +
           "<i>bmw.wd3.myworkdayjobs.com/BMW_Karriere_Extern</i>\n\n" +
           "Send /cancel to go back.",
@@ -388,7 +388,7 @@ export function registerBoardHandlers(bot: Bot): void {
           "🌿 Greenhouse: stripe, anthropic, coinbase, figma, datadog\n" +
           "🔷 Ashby: notion, ramp, linear, vercel, supabase\n" +
           "🔶 Lever: netflix, twitch, clearbit\n" +
-          "🏢 Workday: BMW, Siemens, Intel, Allianz, Infineon\n" +
+          "🏢 Workday: BMW, Siemens, Bosch, Allianz, Infineon\n" +
           "📋 SmartRecruiters: Visa, IKEA, Bosch, Sanofi",
         {
           parse_mode: "HTML",

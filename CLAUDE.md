@@ -10,8 +10,12 @@ Monorepo (orchestrator, shared, extractors, docs-site) for automated job search 
 
 - **No node/npm on host.** All commands run inside Docker.
 - Docker image: `node:22-slim` for quick checks, `docker compose` for full stack.
-- Intel proxy: `http://proxy-dmz.intel.com:912`. CA certs: `gnai-ca-certs.pem`.
+- Corporate proxy: set `HTTP_PROXY` / `HTTPS_PROXY` in `.env` if needed. CA certs: `gnai-ca-certs.pem` (optional, for custom CA).
 - **Windows path spaces**: prefix all docker commands with `MSYS_NO_PATHCONV=1`.
+
+## Mandatory: No Personal or Sensitive Data in Commits
+
+Never commit real email addresses, personal names, employer names, internal hostnames, API keys, tokens, or proxy URLs. Use generic placeholders (`your-email@example.com`, `set ENV_VAR`, `your company`, etc.). Test fixtures must use `"Jane Doe"` / `"Test User"` / `@example.com`. If you spot sensitive data already in tracked files, remove it before committing anything else.
 
 ## Mandatory: Validate Before Reporting Done
 

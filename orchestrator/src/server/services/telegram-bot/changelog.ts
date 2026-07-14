@@ -275,7 +275,7 @@ export const CHANGELOG: ChangelogEntry[] = [
         title: "📬 Auto Gmail Sync",
         description:
           "Your Gmail inbox is now polled every 2 hours and post-application emails are auto-classified. When an email is a confident match (95%+) the job stage is updated automatically; otherwise the email shows up in the Tracking Inbox.",
-        tip: "Tap 📬 Email Sync in the main menu, or send /sync to trigger a manual run, or /gmail_status to check the scheduler. First-time setup: connect olga.fadeeva.job@gmail.com via Settings → Tracking Inbox in the web app.",
+        tip: "Tap 📬 Email Sync in the main menu, or send /sync to trigger a manual run, or /gmail_status to check the scheduler. First-time setup: connect your job-search Gmail account via Settings → Tracking Inbox in the web app.",
       },
       {
         title: "🔔 Per-email Telegram reports",
@@ -290,7 +290,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       {
         title: "✉️ Updated resume email",
         description:
-          "Resumes and cover letters now use olga.fadeeva.job@gmail.com — the dedicated job-search inbox. Any future PDF generation uses the new address automatically.",
+          "Resumes and cover letters now use your dedicated job-search inbox. Any future PDF generation uses the configured address automatically.",
       },
     ],
   },
@@ -437,7 +437,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       {
         title: "🏢 Workday Support",
         description:
-          "Track jobs from Workday companies like BMW, Siemens, Intel, and thousands more. Just type the company name — the bot finds the careers page automatically.",
+          "Track jobs from Workday companies like BMW, Siemens, Bosch, and thousands more. Just type the company name — the bot finds the careers page automatically.",
         tip: 'Go to 📡 Boards → + Add → 🏢 Workday → type "BMW" and the bot does the rest.',
       },
     ],
