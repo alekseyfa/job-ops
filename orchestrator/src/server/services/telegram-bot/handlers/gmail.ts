@@ -73,7 +73,7 @@ async function buildStatusText(): Promise<string> {
   if (accounts.length === 0) {
     lines.push("🔌 <b>No Gmail account connected.</b>");
     lines.push(
-      `<i>Open Settings → Tracking Inbox in the web app to connect olga.fadeeva.job@gmail.com.</i>`,
+      `<i>Open Settings → Tracking Inbox in the web app to connect your Gmail account.</i>`,
     );
   } else {
     lines.push("<b>Accounts</b>");

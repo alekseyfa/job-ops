@@ -27,7 +27,7 @@ const TPM_KEYWORDS: ResumeKeywords = {
     "stakeholder",
     "engineering",
     "embedded",
-    "intel",
+    "linux",
     "qpl",
     "automotive",
     "asil-b",

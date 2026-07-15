@@ -55,6 +55,90 @@ function parseBlockedKeywords(raw: string | null): string[] {
   try { return JSON.parse(raw); } catch { return []; }
 }
 
+// ── Apply Profile field metadata ────────────────────────────────────
+// Data-driven so adding a reusable answer is a one-line change. `shortKey`
+// keeps Telegram callback_data small; `settingKey` is the registry key.
+type ApplyFieldKind = "text" | "number" | "tristate" | "bool";
+
+interface ApplyProfileField {
+  shortKey: string;
+  settingKey: import("../../../repositories/settings").SettingKey;
+  label: string;
+  prompt: string;
+  kind: ApplyFieldKind;
+}
+
+const APPLY_PROFILE_FIELDS: ApplyProfileField[] = [
+  { shortKey: "li", settingKey: "applyLinkedinUrl", label: "LinkedIn URL", prompt: "Your LinkedIn profile URL.", kind: "text" },
+  { shortKey: "gh", settingKey: "applyGithubUrl", label: "GitHub URL", prompt: "Your GitHub profile URL.", kind: "text" },
+  { shortKey: "pf", settingKey: "applyPortfolioUrl", label: "Portfolio URL", prompt: "Your portfolio / personal website URL.", kind: "text" },
+  { shortKey: "np", settingKey: "applyNoticePeriod", label: "Notice Period", prompt: "e.g. \"Immediately\", \"1 month\", \"3 months\".", kind: "text" },
+  { shortKey: "sal", settingKey: "applyDesiredSalary", label: "Desired Salary", prompt: "e.g. \"90,000 EUR\" or \"$120k\". Free text — matches how forms ask.", kind: "text" },
+  { shortKey: "yrs", settingKey: "applyYearsExperience", label: "Years of Experience", prompt: "A whole number, e.g. 8.", kind: "number" },
+  { shortKey: "vs", settingKey: "applyRequiresVisaSponsorship", label: "Needs Visa Sponsorship", prompt: "", kind: "tristate" },
+  { shortKey: "eeo", settingKey: "applyDeclineDemographics", label: "Decline EEO/Demographics", prompt: "", kind: "bool" },
+];
+
+function displayApplyValue(field: ApplyProfileField, raw: string | null): string {
+  if (field.kind === "tristate") {
+    if (raw === "1" || raw === "true") return "Yes";
+    if (raw === "0" || raw === "false") return "No";
+    return "— (ask each time)";
+  }
+  if (field.kind === "bool") {
+    // Decline demographics defaults ON when unset.
+    return raw === "0" || raw === "false" ? "Off" : "On";
+  }
+  if (!raw || raw.trim() === "") return "— (not set)";
+  return raw.length > 40 ? `${raw.slice(0, 37)}…` : raw;
+}
+
+// Cycle a boolean/tri-state toggle. tri-state: null → true → false → null.
+function cycleToggle(current: string | null, kind: ApplyFieldKind): string | null {
+  if (kind === "bool") {
+    return current === "0" || current === "false" ? "1" : "0";
+  }
+  // tri-state
+  if (current === null || current === "" ) return "1";
+  if (current === "1" || current === "true") return "0";
+  return null; // was "0"/false → back to unset
+}
+
+async function renderApplyProfileMenu(
+  ctx: { editMessageText: (t: string, o: object) => Promise<unknown> },
+): Promise<void> {
+  const values = await Promise.all(
+    APPLY_PROFILE_FIELDS.map(async (f) => ({
+      field: f,
+      raw: await settingsRepo.getSetting(f.settingKey),
+    })),
+  );
+
+  let text = "<b>🧾 Apply Profile</b>\n\n";
+  text +=
+    "Reusable answers Smart Apply fills on every application form, so you " +
+    "stop re-typing the same things. Left blank = you fill it per job.\n\n";
+  for (const { field, raw } of values) {
+    text += `• <b>${escapeHtml(field.label)}</b>: ${escapeHtml(displayApplyValue(field, raw))}\n`;
+  }
+  text +=
+    "\n<i>Note: work-authorization (\"authorized to work in X?\") is never " +
+    "auto-answered — it depends on the country. Sponsorship + EEO answers are " +
+    "pre-selected but you confirm them in the browser.</i>";
+
+  const keyboard = new InlineKeyboard();
+  for (const { field } of values) {
+    const action =
+      field.kind === "text" || field.kind === "number"
+        ? `x:ap:set:${field.shortKey}`
+        : `x:ap:tog:${field.shortKey}`;
+    keyboard.text(`✏️ ${field.label}`, action).row();
+  }
+  keyboard.text("◀️ Settings", "x:menu");
+
+  await ctx.editMessageText(text, { parse_mode: "HTML", reply_markup: keyboard });
+}
+
 export function registerSettingsHandlers(bot: Bot): void {
   // Settings menu
   bot.callbackQuery("x:menu", async (ctx) => {
@@ -92,6 +176,7 @@ export function registerSettingsHandlers(bot: Bot): void {
         .text("📡 Boards", "b:menu")
         .text("🚫 Blocked Companies", "x:blocked:0")
         .row()
+        .text("🧾 Apply Profile", "x:ap")
         .text("🔗 Link Code", "x:link")
         .row()
         .text("◀️ Back", "m:menu");
@@ -282,6 +367,74 @@ export function registerSettingsHandlers(bot: Bot): void {
     }
   });
 
+  // ── Apply Profile ─────────────────────────────────────────────────
+  // Reusable non-resume answers that Smart Apply pre-fills on every form, so
+  // the user stops re-typing the same LinkedIn/salary/notice/sponsorship
+  // answers. Backed by the `apply*` settings (settings-registry.ts).
+
+  bot.callbackQuery("x:ap", async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      await renderApplyProfileMenu(ctx);
+    } catch (err) {
+      logger.error("Apply profile menu error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
+    }
+  });
+
+  // Prompt for a text/number field's new value.
+  bot.callbackQuery(/^x:ap:set:([a-zA-Z]+)$/, async (ctx) => {
+    try {
+      await ctx.answerCallbackQuery();
+      const chatId = ctx.chat?.id;
+      if (!chatId) return;
+      const key = ctx.match![1];
+      const field = APPLY_PROFILE_FIELDS.find((f) => f.shortKey === key);
+      if (!field) return;
+      awaitingInput.set(chatId, `settings:ap:${field.shortKey}`);
+      await ctx.editMessageText(
+        `<b>🧾 ${escapeHtml(field.label)}</b>\n\n${field.prompt}\n\n<i>Send the value, or /clear to unset. /cancel to abort.</i>`,
+        {
+          parse_mode: "HTML",
+          reply_markup: new InlineKeyboard().text("◀️ Back", "x:ap"),
+        },
+      );
+    } catch (err) {
+      logger.error("Apply profile set prompt error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
+    }
+  });
+
+  // Cycle a tri-state / boolean toggle field.
+  bot.callbackQuery(/^x:ap:tog:([a-zA-Z]+)$/, async (ctx) => {
+    try {
+      const key = ctx.match![1];
+      const field = APPLY_PROFILE_FIELDS.find((f) => f.shortKey === key);
+      if (!field || field.kind === "text") {
+        await ctx.answerCallbackQuery().catch(() => {});
+        return;
+      }
+      const current = await settingsRepo.getSetting(field.settingKey);
+      const next = cycleToggle(current, field.kind);
+      if (next === null) {
+        await settingsRepo.setSetting(field.settingKey, "");
+      } else {
+        await settingsRepo.setSetting(field.settingKey, next);
+      }
+      await ctx.answerCallbackQuery("Updated").catch(() => {});
+      await renderApplyProfileMenu(ctx);
+    } catch (err) {
+      logger.error("Apply profile toggle error", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await ctx.answerCallbackQuery("❌ Error").catch(() => {});
+    }
+  });
+
   // ── Blocked Companies ─────────────────────────────────────────────
 
   // List blocked companies (paginated)
@@ -445,6 +598,49 @@ export function registerSettingsHandlers(bot: Bot): void {
     const subAction = action.slice("settings:".length);
 
     try {
+      // Apply Profile field input: "ap:<shortKey>".
+      if (subAction.startsWith("ap:")) {
+        const shortKey = subAction.slice("ap:".length);
+        const field = APPLY_PROFILE_FIELDS.find((f) => f.shortKey === shortKey);
+        const backKb = new InlineKeyboard().text("🧾 Apply Profile", "x:ap");
+        if (!field) return;
+
+        const value = ctx.message.text.trim();
+        if (value === "/cancel") {
+          await ctx.reply("Cancelled.", { reply_markup: backKb });
+          return;
+        }
+        if (value === "/clear") {
+          await settingsRepo.setSetting(field.settingKey, "");
+          await ctx.reply(`✅ ${field.label} cleared.`, { reply_markup: backKb });
+          return;
+        }
+        if (field.kind === "number") {
+          const n = parseInt(value, 10);
+          if (Number.isNaN(n) || n < 0 || n > 60) {
+            await ctx.reply(
+              "Please send a whole number between 0 and 60 (or /clear).",
+              { reply_markup: backKb },
+            );
+            return;
+          }
+          await settingsRepo.setSetting(field.settingKey, String(n));
+        } else {
+          if (value.length > 300) {
+            await ctx.reply("Too long (max 300 characters).", {
+              reply_markup: backKb,
+            });
+            return;
+          }
+          await settingsRepo.setSetting(field.settingKey, value);
+        }
+        await ctx.reply(
+          `✅ <b>${escapeHtml(field.label)}</b> saved: ${escapeHtml(displayApplyValue(field, value))}`,
+          { parse_mode: "HTML", reply_markup: backKb },
+        );
+        return;
+      }
+
       if (subAction === "blocked_company") {
         const newKeywords = ctx.message.text
           .split(",")

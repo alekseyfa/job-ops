@@ -100,6 +100,11 @@ export async function buildCompletionMessage(): Promise<string> {
       `   • 🏠 Relocation (non-Munich, non-remote): ${fm.relocationSkipped}`,
     );
   }
+  if (fm.appliedDuplicateSkipped && fm.appliedDuplicateSkipped > 0) {
+    filteredLines.push(
+      `   • 🔁 Already applied (reposted): ${fm.appliedDuplicateSkipped}`,
+    );
+  }
   if (fm.antiDomainSkipped && fm.antiDomainSkipped > 0) {
     const topReasons = Object.entries(fm.antiDomainByReason ?? {})
       .sort(([, a], [, b]) => b - a)

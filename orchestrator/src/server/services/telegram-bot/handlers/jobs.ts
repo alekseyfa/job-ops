@@ -15,6 +15,15 @@ import { formatJobCard, formatJobListItem, escapeHtml } from "../formatting";
 
 const PAGE_SIZE = 5;
 
+// Truncate by code points, not UTF-16 code units, so we never split a
+// surrogate pair (emoji, astral chars) and leave a lone surrogate — Telegram
+// rejects an inline-keyboard button whose text isn't valid UTF-8, which took
+// the whole job list down. ponytail: [...str] iterates code points.
+function truncateCodePoints(str: string, max: number): string {
+  const cps = [...str];
+  return cps.length <= max ? str : cps.slice(0, max).join("");
+}
+
 /**
  * Build a human-readable PDF filename using the candidate's name from their
  * design resume (source of truth), not their Telegram display name.
@@ -78,8 +87,8 @@ export function registerJobHandlers(bot: Bot): void {
     for (const j of pageJobs) {
       const shortId = j.id.slice(0, 8);
       const score = j.suitabilityScore !== null ? `⭐${j.suitabilityScore}` : "";
-      const company = j.employer.slice(0, 15);
-      const title = j.title.slice(0, 22);
+      const company = truncateCodePoints(j.employer, 15);
+      const title = truncateCodePoints(j.title, 22);
       keyboard.text(`${score} ${title} · ${company}`, `j:d:${shortId}`).row();
     }
 

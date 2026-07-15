@@ -187,6 +187,19 @@ export interface AppSettings {
   tailoringPromptVersion: Resolved<number>;
   selectionMode: Resolved<"threshold" | "rank">;
   screeningDraftEnabled: Resolved<boolean>;
+  // Smart Apply answer profile (reusable non-resume answers).
+  applyLinkedinUrl: Resolved<string | null>;
+  applyGithubUrl: Resolved<string | null>;
+  applyPortfolioUrl: Resolved<string | null>;
+  applyNoticePeriod: Resolved<string | null>;
+  applyDesiredSalary: Resolved<string | null>;
+  applyYearsExperience: Resolved<number | null>;
+  applyRequiresVisaSponsorship: Resolved<boolean | null>;
+  applyDeclineDemographics: Resolved<boolean>;
+  // Applied-duplicate filter (auto-skip reposted jobs already applied to).
+  skipAppliedDuplicates: Resolved<boolean>;
+  appliedDuplicateThreshold: Resolved<number>;
+  appliedDuplicateWindowDays: Resolved<number>;
   searchCities: Resolved<string>;
   locationSearchScope: Resolved<LocationSearchScope>;
   locationMatchStrictness: Resolved<LocationMatchStrictness>;

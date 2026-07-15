@@ -13,8 +13,8 @@ import type { Job } from "@shared/types";
 import { progressHelpers, updateProgress } from "../progress";
 import type { ScoredJob } from "./types";
 
-// Anthropic API accepts ~10+ parallel requests comfortably for an Intel
-// GNAI account.  Bumping from 4 → 8 cuts scoring wall-time roughly in half
+// Anthropic API accepts ~10+ parallel requests comfortably.
+// Bumping from 4 → 8 cuts scoring wall-time roughly in half
 // with no quality impact (each call is independent).
 const SCORING_CONCURRENCY = 8;
 

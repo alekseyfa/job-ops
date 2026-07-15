@@ -117,6 +117,12 @@ export interface PipelineRunEffectiveConfig {
 export interface PipelineFilterMetrics {
   /** Jobs flagged by the Munich-or-remote relocation filter. */
   relocationSkipped?: number;
+  /**
+   * Discovered jobs auto-skipped as reposts of a role the user already applied
+   * to (or is in-progress on) — same vacancy re-listed or cross-posted on a
+   * later day, matched by title+employer similarity within a recency window.
+   */
+  appliedDuplicateSkipped?: number;
   /** Jobs flagged by the anti-domain title regex (healthcare, retail, …). */
   antiDomainSkipped?: number;
   /** Breakdown of antiDomainSkipped by domain key, e.g. {"healthcare": 12}. */
