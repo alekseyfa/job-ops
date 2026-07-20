@@ -10,7 +10,7 @@ Monorepo (orchestrator, shared, extractors, docs-site) for automated job search 
 
 - **No node/npm on host.** All commands run inside Docker.
 - Docker image: `node:22-slim` for quick checks, `docker compose` for full stack.
-- Corporate proxy: set `HTTP_PROXY` / `HTTPS_PROXY` in `.env` if needed. CA certs: `gnai-ca-certs.pem` (optional, for custom CA).
+- Corporate proxy: set `HTTP_PROXY` / `HTTPS_PROXY` in `.env` if needed (routed through a global undici dispatcher at startup — see `config/proxy.ts`). For TLS-intercepting proxies, mount a CA bundle and set `NODE_EXTRA_CA_CERTS`.
 - **Windows path spaces**: prefix all docker commands with `MSYS_NO_PATHCONV=1`.
 
 ## Mandatory: No Personal or Sensitive Data in Commits
@@ -149,13 +149,15 @@ Daily 3 AM UTC. Removes `discovered`/`skipped`/`expired` jobs older than 90 days
 
 ### LLM Providers
 
-8 providers in `services/llm/providers/`. Factory via `createProviderStrategy`. **Working GNAI aliases:** `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5` — full dated IDs do NOT work on GNAI. Per-purpose model mix resolved in `modelSelection.ts:resolveLlmModel()`.
+9 providers in `services/llm/providers/`. Factory via `createProviderStrategy`. Per-purpose model mix resolved in `modelSelection.ts:resolveLlmModel()`.
+
+**Claude via AWS Bedrock:** set `CLAUDE_CODE_USE_BEDROCK=1` + `AWS_BEARER_TOKEN_BEDROCK` + `AWS_REGION` (optional `ANTHROPIC_MODEL`). This env toggle short-circuits the DB-backed provider/model settings in `createConfiguredLlmService()` and `resolveLlmModel()`. The `bedrock` provider is env-only — deliberately not selectable in the settings UI.
 
 ### Cost Guard Rails
 
 - `pipelineMaxJobsToScore` (default 2000) caps LLM calls per run.
 - Job description truncated at 8 KB (`JOB_DESCRIPTION_MAX_CHARS = 8000`) in `scorer.ts` and `summary.ts` — keep in sync.
-- Daily Anthropic budget on GNAI: **$80/day**.
+- Watch the AWS Bedrock spend/quota for the account behind `AWS_BEARER_TOKEN_BEDROCK`.
 
 ### Extractors
 

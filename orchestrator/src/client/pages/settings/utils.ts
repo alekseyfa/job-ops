@@ -75,7 +75,7 @@ const PROVIDER_HINTS: Record<LlmProviderId, string> = {
   codex:
     "Codex runs through a local app-server process and uses your Codex login session.",
   anthropic:
-    "Anthropic Messages API. Supports direct API, GNAI gateway, or any compatible proxy.",
+    "Anthropic Messages API. Supports the direct API or any compatible proxy.",
 };
 
 const PROVIDER_KEY_HELPERS: Record<

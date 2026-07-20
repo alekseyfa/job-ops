@@ -28,8 +28,8 @@ function extractCommand(text: string): string | null {
 }
 
 export function createBot(token: string): Bot {
-  // Grammy uses fetch internally; HTTPS_PROXY env var is honoured by undici
-  // via the global agent set up in Docker.
+  // Grammy uses fetch internally; HTTPS_PROXY is honoured via the global
+  // undici dispatcher installed at startup (see config/proxy.ts).
   const botInstance = new Bot(token);
 
   botInstance.catch((err) => {

@@ -18,8 +18,8 @@
  *
  * The May 2026 regression was that EVERY LLM failure was reclassified as
  * `LlmNotConfiguredError` and the mock-score fallback was deleted.  A single
- * 503 from GNAI killed the entire run with a misleading "check your API
- * key" message.  Keep the two classes distinct.
+ * 503 from the provider killed the entire run with a misleading "check your
+ * API key" message.  Keep the two classes distinct.
  */
 export class LlmNotConfiguredError extends Error {
   constructor(message?: string) {

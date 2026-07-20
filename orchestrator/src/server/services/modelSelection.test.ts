@@ -1,6 +1,7 @@
 // src/server/services/modelSelection.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as settingsRepo from "../repositories/settings";
+import * as envSettings from "./envSettings";
 import { pickProjectIdsForJob } from "./projectSelection";
 import { scoreJobSuitability } from "./scorer";
 import { getEffectiveSettings } from "./settings";
@@ -219,6 +220,59 @@ describe("Model Selection Logic", () => {
       const fetchCall = vi.mocked(fetch).mock.calls[0];
       const body = JSON.parse(fetchCall[1]?.body as string);
       expect(body.model).toBe("global-model");
+    });
+  });
+
+  describe("Bedrock end-to-end (CLAUDE_CODE_USE_BEDROCK)", () => {
+    beforeEach(() => {
+      process.env.CLAUDE_CODE_USE_BEDROCK = "1";
+      process.env.AWS_REGION = "eu-west-1";
+      process.env.ANTHROPIC_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0";
+      // The Bedrock token is read via a module-load env snapshot, so spy the
+      // accessor rather than mutating process.env (which the snapshot ignores).
+      vi.spyOn(envSettings, "getOriginalEnvValue").mockImplementation((key) =>
+        key === "AWS_BEARER_TOKEN_BEDROCK" ? "bedrock-bearer-token" : undefined,
+      );
+
+      // Bedrock returns Anthropic-shaped content, not chat-completions choices.
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                score: 77,
+                explanation: "strong match",
+                summary: "s",
+                headline: "h",
+                skills: [],
+              }),
+            },
+          ],
+        }),
+      });
+    });
+
+    it("routes scoring through the Bedrock endpoint and parses the result", async () => {
+      const result = await scoreJobSuitability(
+        { id: "job-1", title: "Test Job", jobDescription: "desc" } as any,
+        {},
+      );
+
+      // End-to-end: the Anthropic-shaped response was parsed back into a score.
+      expect(result.score).toBe(77);
+
+      const [url, init] = vi.mocked(fetch).mock.calls[0];
+      // Region from AWS_REGION, model in the path, Bedrock invoke route.
+      expect(url).toBe(
+        "https://bedrock-runtime.eu-west-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/invoke",
+      );
+      const headers = init?.headers as Record<string, string>;
+      expect(headers.Authorization).toBe("Bearer bedrock-bearer-token");
+      const body = JSON.parse(init?.body as string);
+      expect(body.anthropic_version).toBe("bedrock-2023-05-31");
+      expect(body.model).toBeUndefined(); // model lives in the URL, not the body
     });
   });
 

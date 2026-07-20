@@ -9,7 +9,7 @@ type ProcessJobFn = (
 ) => Promise<{ success: boolean; error?: string }>;
 // Each processed job triggers 2 LLM calls (tailoring + project pick) plus a
 // LaTeX/rxresume PDF render.  Concurrency=5 keeps top-N=20 processing under
-// 2 minutes while staying within the GNAI rate limit.
+// 2 minutes while staying within the LLM provider rate limit.
 const PROCESSING_CONCURRENCY = 5;
 
 export async function processJobsStep(args: {

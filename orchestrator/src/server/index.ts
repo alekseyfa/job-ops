@@ -4,6 +4,7 @@
 
 import "./config/env";
 import { logger } from "@infra/logger";
+import { installProxyDispatcher } from "./config/proxy";
 import { sanitizeUnknown } from "@infra/sanitize";
 import { createApp } from "./app";
 import { initializeExtractorRegistry } from "./extractors/registry";
@@ -41,6 +42,7 @@ async function cleanupAuthSessions(trigger: "startup" | "interval") {
 }
 
 async function startServer() {
+  await installProxyDispatcher();
   await applyStoredEnvOverrides();
   try {
     await initializeExtractorRegistry();

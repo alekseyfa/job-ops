@@ -1,6 +1,11 @@
 import * as settingsRepo from "@server/repositories/settings";
 import { getOriginalEnvValue } from "@server/services/envSettings";
 import { LlmService } from "@server/services/llm/service";
+import {
+  isBedrockEnabled,
+  resolveBedrockBaseUrl,
+  resolveBedrockModel,
+} from "@server/services/llm/providers/bedrock";
 import { getEffectiveSettings } from "@server/services/settings";
 import { getDefaultModelForProvider } from "@shared/settings-registry";
 
@@ -37,6 +42,12 @@ function resolveDefaultModelFromSettings(
 export async function resolveLlmModel(
   purpose: LlmModelPurpose = "default",
 ): Promise<string> {
+  // Bedrock opt-in is env-driven and single-model: env wins over DB settings
+  // (DB model ids are gemini/openrouter-shaped and won't resolve on Bedrock).
+  if (isBedrockEnabled()) {
+    return resolveBedrockModel();
+  }
+
   const settings = await getEffectiveSettings();
   const defaultModel = resolveDefaultModelFromSettings(settings);
 
@@ -94,6 +105,16 @@ export async function resolveLlmRuntimeSettings(
 }
 
 export async function createConfiguredLlmService(): Promise<LlmService> {
+  // CLAUDE_CODE_USE_BEDROCK short-circuits DB settings: point at the regional
+  // Bedrock endpoint and authenticate with the AWS_BEARER_TOKEN_BEDROCK token.
+  if (isBedrockEnabled()) {
+    return new LlmService({
+      provider: "bedrock",
+      baseUrl: resolveBedrockBaseUrl(),
+      apiKey: getOriginalEnvValue("AWS_BEARER_TOKEN_BEDROCK") ?? null,
+    });
+  }
+
   const runtime = await resolveLlmRuntimeSettings();
   return new LlmService({
     provider: runtime.provider,

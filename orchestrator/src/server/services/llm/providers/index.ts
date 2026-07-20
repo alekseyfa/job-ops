@@ -1,5 +1,6 @@
 import type { LlmProvider, ProviderStrategy } from "../types";
 import { anthropicStrategy } from "./anthropic";
+import { bedrockStrategy } from "./bedrock";
 import { codexStrategy } from "./codex";
 import { geminiStrategy } from "./gemini";
 import { lmStudioStrategy } from "./lmstudio";
@@ -17,4 +18,5 @@ export const strategies: Record<LlmProvider, ProviderStrategy> = {
   gemini: geminiStrategy,
   codex: codexStrategy,
   anthropic: anthropicStrategy,
+  bedrock: bedrockStrategy,
 };

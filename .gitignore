@@ -2,8 +2,8 @@
 .env
 *.env.local
 
-# GNAI CA certificates (copied by scripts/gnai-token.sh)
-gnai-ca-certs.pem
+# Custom CA bundle for TLS-intercepting proxies (NODE_EXTRA_CA_CERTS)
+*-ca-certs.pem
 
 # Dependencies
 node_modules/

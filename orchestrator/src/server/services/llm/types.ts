@@ -6,7 +6,8 @@ export type LlmProvider =
   | "openai_compatible"
   | "gemini"
   | "codex"
-  | "anthropic";
+  | "anthropic"
+  | "bedrock";
 
 export type ResponseMode = "json_schema" | "json_object" | "text" | "none";
 

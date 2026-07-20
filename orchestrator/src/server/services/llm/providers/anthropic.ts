@@ -4,7 +4,7 @@ import { getNestedValue } from "../utils/object";
 import { createProviderStrategy } from "./factory";
 
 const ANTHROPIC_VERSION = "2023-06-01";
-const DEFAULT_MAX_TOKENS = 8192;
+export const ANTHROPIC_DEFAULT_MAX_TOKENS = 8192;
 
 export const anthropicStrategy = createProviderStrategy({
   provider: "anthropic",
@@ -21,7 +21,7 @@ export const anthropicStrategy = createProviderStrategy({
 
     const body: Record<string, unknown> = {
       model,
-      max_tokens: DEFAULT_MAX_TOKENS,
+      max_tokens: ANTHROPIC_DEFAULT_MAX_TOKENS,
       messages: conversationMessages,
     };
 
@@ -35,20 +35,7 @@ export const anthropicStrategy = createProviderStrategy({
       body,
     };
   },
-  extractText: (response) => {
-    const content = getNestedValue(response, ["content"]);
-    if (!Array.isArray(content)) return null;
-
-    const text = content
-      .filter(
-        (block) => getNestedValue(block, ["type"]) === "text",
-      )
-      .map((block) => getNestedValue(block, ["text"]))
-      .filter((part): part is string => typeof part === "string")
-      .join("");
-
-    return text || null;
-  },
+  extractText: extractAnthropicText,
   getValidationUrls: ({ baseUrl, apiKey }) => {
     // Anthropic /v1/models requires x-api-key, which is sent via headers.
     return [joinUrl(baseUrl, "/v1/models")];
@@ -70,7 +57,20 @@ function buildAnthropicHeaders(
   return headers;
 }
 
-function toAnthropicMessages(
+export function extractAnthropicText(response: unknown): string | null {
+  const content = getNestedValue(response, ["content"]);
+  if (!Array.isArray(content)) return null;
+
+  const text = content
+    .filter((block) => getNestedValue(block, ["type"]) === "text")
+    .map((block) => getNestedValue(block, ["text"]))
+    .filter((part): part is string => typeof part === "string")
+    .join("");
+
+  return text || null;
+}
+
+export function toAnthropicMessages(
   messages: LlmRequestOptions<unknown>["messages"],
   mode: ResponseMode,
   jsonSchema: { name: string; schema: Record<string, unknown> },

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { bedrockStrategy } from "./bedrock";
 import { geminiStrategy } from "./gemini";
 import { lmStudioStrategy } from "./lmstudio";
 import { ollamaStrategy } from "./ollama";
@@ -140,6 +141,40 @@ describe("provider adapters", () => {
         ).toBe(testCase.expectedResponseFormat);
       }
     }
+  });
+
+  it("puts the Bedrock model in the URL path and version in the body", () => {
+    const request = bedrockStrategy.buildRequest({
+      mode: "text",
+      baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      apiKey: "bearer-token",
+      model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      messages: [
+        { role: "system", content: "be terse" },
+        { role: "user", content: "hi" },
+      ],
+      jsonSchema: schema,
+    });
+
+    // Model lives in the path (encoded), never in the body.
+    expect(request.url).toBe(
+      "https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/invoke",
+    );
+    const body = request.body as Record<string, unknown>;
+    expect(body.anthropic_version).toBe("bedrock-2023-05-31");
+    expect(body.model).toBeUndefined();
+    expect(body.system).toBe("be terse");
+    expect((request.headers as Record<string, string>).Authorization).toBe(
+      "Bearer bearer-token",
+    );
+  });
+
+  it("extracts Anthropic-shaped content for Bedrock", () => {
+    expect(
+      bedrockStrategy.extractText({
+        content: [{ type: "text", text: "ok" }],
+      }),
+    ).toBe("ok");
   });
 
   it("extracts text consistently for chat-completions providers", () => {
