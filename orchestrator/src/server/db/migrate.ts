@@ -1016,6 +1016,20 @@ const migrations = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_screening_answers_tenant_question_unique
     ON screening_answers(tenant_id, question_normalized)`,
+
+  // Telegram per-tenant binding: maps a chat to a user+tenant, replacing the
+  // flat telegramAuthorizedChatIds setting.
+  `CREATE TABLE IF NOT EXISTS telegram_links (
+    chat_id INTEGER PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_telegram_links_tenant_id ON telegram_links(tenant_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_telegram_links_user_id ON telegram_links(user_id)`,
 ];
 
 console.log("🔧 Running database migrations...");
@@ -1171,6 +1185,46 @@ function seedLegacyOwnerFromBasicAuth(): void {
   sqlite.exec("DELETE FROM auth_sessions");
 }
 
+/**
+ * Migrate the legacy flat `telegramAuthorizedChatIds` setting (stored under the
+ * default tenant) into telegram_links rows bound to the default tenant's owner.
+ * Idempotent: only inserts rows that don't already exist. Preserves access for
+ * single-tenant installs upgrading to the per-tenant model.
+ */
+function migrateLegacyTelegramAllowlist(): void {
+  if (!tableExists("telegram_links") || !tableExists("settings")) return;
+
+  const row = sqlite
+    .prepare(
+      "SELECT value FROM settings WHERE tenant_id = ? AND key = 'telegramAuthorizedChatIds'",
+    )
+    .get(DEFAULT_TENANT_ID) as { value: string } | undefined;
+  if (!row?.value) return;
+
+  // Owner of the default tenant becomes the account those chats map to.
+  const owner = sqlite
+    .prepare(
+      `SELECT u.id AS id FROM users u
+       INNER JOIN tenant_memberships m ON m.user_id = u.id
+       WHERE m.tenant_id = ?
+       ORDER BY u.is_system_admin DESC, u.created_at ASC
+       LIMIT 1`,
+    )
+    .get(DEFAULT_TENANT_ID) as { id: string } | undefined;
+  if (!owner) return;
+
+  const now = new Date().toISOString();
+  const insert = sqlite.prepare(
+    `INSERT OR IGNORE INTO telegram_links(chat_id, user_id, tenant_id, created_at)
+     VALUES (?, ?, ?, ?)`,
+  );
+  for (const part of row.value.split(",")) {
+    const chatId = Number.parseInt(part.trim(), 10);
+    if (Number.isNaN(chatId)) continue;
+    insert.run(chatId, owner.id, DEFAULT_TENANT_ID, now);
+  }
+}
+
 console.log("🔐 Applying tenancy compatibility migrations...");
 ensureTenantColumns();
 rebuildSettingsTable();
@@ -1184,6 +1238,7 @@ sqlite.exec(
   "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions(user_id)",
 );
 seedLegacyOwnerFromBasicAuth();
+migrateLegacyTelegramAllowlist();
 
 sqlite.close();
 console.log("🎉 Database migrations complete!");

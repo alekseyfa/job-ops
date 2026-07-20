@@ -1,27 +1,45 @@
 import { logger } from "@infra/logger";
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { InlineKeyboard } from "grammy";
 import { subscribeToProgress } from "../../pipeline/progress";
 import { getLatestPipelineRunWithDetails } from "../../repositories/pipeline";
+import {
+  getChatIdsForTenant,
+  listTenantIdsWithLinkedChats,
+} from "../../repositories/telegram-links";
 import { subscribeToBatchProgress } from "../linkedin-auto-apply/batch";
-import { areNotificationsEnabled, getAuthorizedChatIds } from "./auth";
+import { areNotificationsEnabled } from "./auth";
 import { getBot } from "./bot";
 
-let pipelineUnsub: (() => void) | null = null;
+// One pipeline-progress subscription per tenant (progress.ts is tenant-keyed).
+const pipelineUnsubByTenant = new Map<string, () => void>();
 let batchUnsub: (() => void) | null = null;
 
-async function broadcast(
+/**
+ * Send a message to every chat linked to a specific tenant, honoring that
+ * tenant's own notification toggle. Runs the setting read + chat lookup inside
+ * the tenant's request context so isolation holds.
+ */
+async function broadcastToTenant(
+  tenantId: string,
   text: string,
   options?: { reply_markup?: InlineKeyboard },
 ): Promise<void> {
   const bot = getBot();
   if (!bot) return;
 
-  if (!(await areNotificationsEnabled())) return;
+  const { enabled, chatIds } = await runWithRequestContext(
+    { tenantId },
+    async () => ({
+      enabled: await areNotificationsEnabled(),
+      chatIds: await getChatIdsForTenant(tenantId),
+    }),
+  );
+  if (!enabled || chatIds.length === 0) return;
 
-  const chatIds = await getAuthorizedChatIds();
-  // Telegram global limit is ~30 messages/sec across all chats. We're far
-  // below that today (1 user) but a small inter-message delay future-proofs
-  // the broadcast and avoids 429s when the user list grows.
+  // Telegram global limit is ~30 messages/sec across all chats. A small
+  // inter-message delay future-proofs the broadcast and avoids 429s.
   const SEND_INTERVAL_MS = 50;
   let first = true;
   for (const chatId of chatIds) {
@@ -34,6 +52,7 @@ async function broadcast(
       });
     } catch (err) {
       logger.warn("Failed to send Telegram notification", {
+        tenantId,
         chatId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -168,15 +187,28 @@ export async function buildCompletionMessage(): Promise<string> {
   return lines.join("\n");
 }
 
-export function startNotificationSubscriptions(): void {
-  // Pipeline completion/failure notifications
-  let lastPipelineStep = "idle";
+/**
+ * Subscribe to one tenant's pipeline progress and mirror lifecycle transitions
+ * to that tenant's linked chats. Idempotent per tenant. The subscription is
+ * created INSIDE the tenant's context because progress.ts keys listeners by the
+ * active tenant; the callbacks re-establish that context before rendering.
+ */
+export function ensureTenantSubscribed(tenantId: string): void {
+  if (pipelineUnsubByTenant.has(tenantId)) return;
 
-  pipelineUnsub = subscribeToProgress((progress) => {
+  let lastPipelineStep = "idle";
+  const broadcast = (
+    text: string,
+    options?: { reply_markup?: InlineKeyboard },
+  ) => void broadcastToTenant(tenantId, text, options);
+
+  const unsub = runWithRequestContext({ tenantId }, () =>
+    subscribeToProgress((progress) => {
     if (progress.step === "completed" && lastPipelineStep !== "completed") {
-      // Async-fire — the broadcast() helper tolerates an awaited rendering
-      // step before sending.  We deliberately don't block the listener.
-      void buildCompletionMessage().then((text) =>
+      // Async-fire — render inside the tenant context, then broadcast.
+      void runWithRequestContext({ tenantId }, () =>
+        buildCompletionMessage(),
+      ).then((text) =>
         broadcast(text, {
           reply_markup: new InlineKeyboard()
             .text("📋 View Ready Jobs", "j:ready:0")
@@ -251,9 +283,32 @@ export function startNotificationSubscriptions(): void {
     }
 
     lastPipelineStep = progress.step;
-  });
+    }),
+  );
+  pipelineUnsubByTenant.set(tenantId, unsub);
+}
 
-  // Batch apply completion notifications
+/**
+ * Start proactive notifications. Subscribes every tenant that has at least one
+ * linked chat to its own pipeline progress, plus the (single) batch-apply feed.
+ * Safe to call repeatedly.
+ */
+export async function startNotificationSubscriptions(): Promise<void> {
+  try {
+    const tenantIds = await listTenantIdsWithLinkedChats();
+    for (const tenantId of tenantIds) {
+      ensureTenantSubscribed(tenantId);
+    }
+  } catch (err) {
+    logger.warn("Failed to subscribe tenants to pipeline notifications", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Batch apply completion notifications. LinkedIn batch apply is a
+  // single-process feature with no per-tenant progress channel, so its
+  // completion is announced to the default tenant's chats only.
+  // ponytail: default-tenant batch feed; make per-tenant if batch goes multi-tenant.
   let wasBatchRunning = false;
 
   batchUnsub = subscribeToBatchProgress((progress) => {
@@ -279,7 +334,7 @@ export function startNotificationSubscriptions(): void {
         }
       }
 
-      broadcast(lines.join("\n"), {
+      void broadcastToTenant(DEFAULT_TENANT_ID, lines.join("\n"), {
         reply_markup: new InlineKeyboard()
           .text("📋 Applied", "j:applied:0")
           .text("◀️ Menu", "m:menu"),
@@ -291,10 +346,14 @@ export function startNotificationSubscriptions(): void {
 }
 
 export function stopNotificationSubscriptions(): void {
-  if (pipelineUnsub) {
-    pipelineUnsub();
-    pipelineUnsub = null;
+  for (const unsub of pipelineUnsubByTenant.values()) {
+    try {
+      unsub();
+    } catch {
+      // ignore
+    }
   }
+  pipelineUnsubByTenant.clear();
   if (batchUnsub) {
     batchUnsub();
     batchUnsub = null;

@@ -14,7 +14,7 @@
 import { logger } from "@infra/logger";
 import {
   getGmailSyncSchedulerStatus,
-  runGmailSyncForAllAccounts,
+  runGmailSyncForCurrentTenant,
 } from "@server/services/gmail-sync-scheduler";
 import { listConnectedPostApplicationIntegrations } from "@server/repositories/post-application-integrations";
 import { listPostApplicationMessagesByProcessingStatus } from "@server/repositories/post-application-messages";
@@ -157,7 +157,7 @@ async function runManualSync(ctx: Context): Promise<void> {
   const replyMessageId = typeof reply === "object" ? reply.message_id : null;
 
   try {
-    const result = await runGmailSyncForAllAccounts({ reason: "manual" });
+    const result = await runGmailSyncForCurrentTenant({ reason: "manual" });
     const summaryLines = [
       "✅ <b>Gmail sync done</b>",
       "",

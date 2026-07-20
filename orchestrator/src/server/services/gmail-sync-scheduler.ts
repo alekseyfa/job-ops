@@ -14,8 +14,11 @@
 import { EventEmitter } from "node:events";
 import { logger } from "@infra/logger";
 import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
+import { getActiveTenantId } from "@server/tenancy/context";
 import { listConnectedPostApplicationIntegrations } from "../repositories/post-application-integrations";
 import * as settingsRepo from "../repositories/settings";
+import { listTenants } from "../repositories/tenants";
 import {
   type GmailSyncSummary,
   runGmailIngestionSync,
@@ -109,102 +112,165 @@ async function readEnabled(): Promise<boolean> {
   return raw === "true" || raw === "1";
 }
 
+function emptyTotals(): GmailSyncSummary {
+  return { discovered: 0, relevant: 0, classified: 0, errored: 0 };
+}
+
 /**
- * Run the sync for every connected Gmail account.  Called both by the timer
- * and by manual triggers (e.g. /sync command in Telegram).  Returns the
- * combined summary so the caller can show "synced N messages" feedback.
+ * Sync every connected Gmail account for the CURRENT tenant context. Must be
+ * called inside a runWithRequestContext({tenantId}) scope. Does not manage the
+ * global in-flight guard (the caller owns that). Failure counters are keyed by
+ * `${tenantId}:${accountKey}` so one tenant's failures can't mask another's.
  */
-export async function runGmailSyncForAllAccounts(args?: {
-  reason?: "scheduled" | "manual";
-}): Promise<{
+async function syncCurrentTenantAccounts(): Promise<{
   ranAccounts: number;
   totals: GmailSyncSummary;
 }> {
+  const tenantId = getActiveTenantId();
+  const totals = emptyTotals();
+  const integrations = await listConnectedPostApplicationIntegrations("gmail");
+  if (integrations.length === 0) {
+    return { ranAccounts: 0, totals };
+  }
+
+  for (const integration of integrations) {
+    const accountKey = integration.accountKey;
+    const failureKey = `${tenantId}:${accountKey}`;
+    const accountStartedAt = Date.now();
+    try {
+      const summary = await runGmailIngestionSync({ accountKey });
+      totals.discovered += summary.discovered;
+      totals.relevant += summary.relevant;
+      totals.classified += summary.classified;
+      totals.errored += summary.errored;
+      state.consecutiveFailures.delete(failureKey);
+      emit({
+        type: "account_synced",
+        accountKey,
+        summary,
+        durationMs: Date.now() - accountStartedAt,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failures = (state.consecutiveFailures.get(failureKey) ?? 0) + 1;
+      state.consecutiveFailures.set(failureKey, failures);
+      const shouldAlertUser = failures === FAILURE_ALERT_THRESHOLD;
+      emit({
+        type: "account_failed",
+        accountKey,
+        error: message,
+        consecutiveFailures: failures,
+        shouldAlertUser,
+      });
+      logger.warn("Gmail sync failed for account", {
+        tenantId,
+        accountKey,
+        consecutiveFailures: failures,
+        error: message,
+      });
+    }
+  }
+
+  return { ranAccounts: integrations.length, totals };
+}
+
+/**
+ * Run the sync for the CURRENT tenant only. Used by manual triggers (e.g. the
+ * /sync command), which run inside the requesting tenant's context. Returns the
+ * combined summary so the caller can show "synced N messages" feedback.
+ */
+export async function runGmailSyncForCurrentTenant(args?: {
+  reason?: "scheduled" | "manual";
+}): Promise<{ ranAccounts: number; totals: GmailSyncSummary }> {
   if (state.inFlight) {
     logger.info("Gmail sync skipped: already in flight", {
       reason: args?.reason,
     });
-    return {
-      ranAccounts: 0,
-      totals: { discovered: 0, relevant: 0, classified: 0, errored: 0 },
-    };
+    return { ranAccounts: 0, totals: emptyTotals() };
   }
 
   state.inFlight = true;
   state.lastTickStartedAt = Date.now();
+  try {
+    const result = await syncCurrentTenantAccounts();
+    if (result.ranAccounts === 0) {
+      emit({ type: "no_accounts_connected" });
+      return result;
+    }
+    emit({
+      type: "tick_started",
+      accountCount: result.ranAccounts,
+      startedAt: state.lastTickStartedAt,
+    });
+    emit({
+      type: "tick_completed",
+      durationMs: Date.now() - state.lastTickStartedAt,
+      totals: result.totals,
+      accountCount: result.ranAccounts,
+    });
+    return result;
+  } finally {
+    state.inFlight = false;
+    state.lastTickCompletedAt = Date.now();
+  }
+}
 
-  const totals: GmailSyncSummary = {
-    discovered: 0,
-    relevant: 0,
-    classified: 0,
-    errored: 0,
-  };
+/**
+ * Scheduled entry point: sync every tenant's connected Gmail accounts. Each
+ * tenant is evaluated inside its own request context and self-gates on its own
+ * gmailSyncEnabled setting. Aggregates totals across all tenants.
+ */
+export async function runGmailSyncForAllAccounts(args?: {
+  reason?: "scheduled" | "manual";
+}): Promise<{ ranAccounts: number; totals: GmailSyncSummary }> {
+  if (state.inFlight) {
+    logger.info("Gmail sync skipped: already in flight", {
+      reason: args?.reason,
+    });
+    return { ranAccounts: 0, totals: emptyTotals() };
+  }
+
+  state.inFlight = true;
+  state.lastTickStartedAt = Date.now();
+  const totals = emptyTotals();
+  let ranAccounts = 0;
 
   try {
-    const integrations =
-      await listConnectedPostApplicationIntegrations("gmail");
+    const tenants = await listTenants();
+    for (const tenant of tenants) {
+      const result = await runWithRequestContext(
+        { tenantId: tenant.id },
+        async () => {
+          if (!(await readEnabled())) return null;
+          return syncCurrentTenantAccounts();
+        },
+      );
+      if (!result) continue;
+      ranAccounts += result.ranAccounts;
+      totals.discovered += result.totals.discovered;
+      totals.relevant += result.totals.relevant;
+      totals.classified += result.totals.classified;
+      totals.errored += result.totals.errored;
+    }
 
-    if (integrations.length === 0) {
+    if (ranAccounts === 0) {
       emit({ type: "no_accounts_connected" });
       return { ranAccounts: 0, totals };
     }
 
     emit({
       type: "tick_started",
-      accountCount: integrations.length,
+      accountCount: ranAccounts,
       startedAt: state.lastTickStartedAt,
     });
-
-    for (const integration of integrations) {
-      const accountKey = integration.accountKey;
-      const accountStartedAt = Date.now();
-      try {
-        const summary = await runWithRequestContext({}, async () =>
-          runGmailIngestionSync({
-            accountKey,
-          }),
-        );
-        totals.discovered += summary.discovered;
-        totals.relevant += summary.relevant;
-        totals.classified += summary.classified;
-        totals.errored += summary.errored;
-        state.consecutiveFailures.delete(accountKey);
-        emit({
-          type: "account_synced",
-          accountKey,
-          summary,
-          durationMs: Date.now() - accountStartedAt,
-        });
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
-        const failures =
-          (state.consecutiveFailures.get(accountKey) ?? 0) + 1;
-        state.consecutiveFailures.set(accountKey, failures);
-        const shouldAlertUser = failures === FAILURE_ALERT_THRESHOLD;
-        emit({
-          type: "account_failed",
-          accountKey,
-          error: message,
-          consecutiveFailures: failures,
-          shouldAlertUser,
-        });
-        logger.warn("Gmail sync failed for account", {
-          accountKey,
-          consecutiveFailures: failures,
-          error: message,
-        });
-      }
-    }
-
     emit({
       type: "tick_completed",
       durationMs: Date.now() - state.lastTickStartedAt,
       totals,
-      accountCount: integrations.length,
+      accountCount: ranAccounts,
     });
 
-    return { ranAccounts: integrations.length, totals };
+    return { ranAccounts, totals };
   } finally {
     state.inFlight = false;
     state.lastTickCompletedAt = Date.now();
@@ -233,14 +299,13 @@ async function tick(): Promise<void> {
  * the interval changes.
  */
 export async function initializeGmailSyncScheduler(): Promise<void> {
-  const enabled = await readEnabled();
-  if (!enabled) {
-    clearTimer();
-    logger.info("Gmail sync scheduler disabled by settings");
-    return;
-  }
-
-  const intervalMs = await readIntervalMs();
+  // The scheduled loop always runs; per-tenant gating (gmailSyncEnabled) is
+  // evaluated inside runGmailSyncForAllAccounts for each tenant. The interval
+  // cadence is a system-level setting read from the default tenant context.
+  const intervalMs = await runWithRequestContext(
+    { tenantId: DEFAULT_TENANT_ID },
+    () => readIntervalMs(),
+  );
   if (state.timer && state.intervalMs === intervalMs) {
     // Already running at the right cadence; nothing to do.
     return;

@@ -19,18 +19,21 @@
  */
 
 import { logger } from "@infra/logger";
+import { runWithRequestContext } from "@infra/request-context";
+import { markPostApplicationMessageNotified } from "@server/repositories/post-application-messages";
+import { getChatIdsForTenant } from "@server/repositories/telegram-links";
 import * as settingsRepo from "@server/repositories/settings";
-import {
-  type GmailProcessedMessageEvent,
-  subscribeToGmailProcessedMessages,
-} from "@server/services/post-application/ingestion/gmail-sync-events";
 import {
   subscribeToGmailSyncHealth,
   type GmailSyncHealthEvent,
 } from "@server/services/gmail-sync-scheduler";
-import { markPostApplicationMessageNotified } from "@server/repositories/post-application-messages";
+import {
+  type GmailProcessedMessageEvent,
+  subscribeToGmailProcessedMessages,
+} from "@server/services/post-application/ingestion/gmail-sync-events";
+import { getActiveTenantId } from "@server/tenancy/context";
 import { InlineKeyboard } from "grammy";
-import { areNotificationsEnabled, getAuthorizedChatIds } from "./auth";
+import { areNotificationsEnabled } from "./auth";
 import { getBot } from "./bot";
 import { escapeHtml } from "./formatting";
 
@@ -45,17 +48,29 @@ async function isGmailNotificationsEnabled(): Promise<boolean> {
   return raw === "true" || raw === "1";
 }
 
-async function broadcast(
+/**
+ * Broadcast to the chats of a specific tenant. The Gmail sync runs each tenant
+ * in its own context and the event emitters fire synchronously within it, so
+ * callers capture the tenantId at emit time and pass it here.
+ */
+async function broadcastToTenant(
+  tenantId: string,
   text: string,
   options?: { reply_markup?: InlineKeyboard },
 ): Promise<boolean> {
   const bot = getBot();
   if (!bot) return false;
-  if (!(await areNotificationsEnabled())) return false;
-  if (!(await isGmailNotificationsEnabled())) return false;
 
-  const chatIds = await getAuthorizedChatIds();
-  if (chatIds.size === 0) return false;
+  const { allowed, chatIds } = await runWithRequestContext(
+    { tenantId },
+    async () => ({
+      allowed:
+        (await areNotificationsEnabled()) &&
+        (await isGmailNotificationsEnabled()),
+      chatIds: await getChatIdsForTenant(tenantId),
+    }),
+  );
+  if (!allowed || chatIds.length === 0) return false;
 
   let anyDelivered = false;
   let first = true;
@@ -71,6 +86,7 @@ async function broadcast(
       anyDelivered = true;
     } catch (err) {
       logger.warn("Failed to send Gmail Telegram notification", {
+        tenantId,
         chatId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -164,6 +180,7 @@ function buildKeyboard(
 }
 
 async function handleProcessedMessage(
+  tenantId: string,
   event: GmailProcessedMessageEvent,
 ): Promise<void> {
   // The emitter has already filtered out "ignored" messages, but be defensive
@@ -171,15 +188,18 @@ async function handleProcessedMessage(
   if (event.action === "ignored") return;
 
   const text = buildMessageBody(event);
-  const delivered = await broadcast(text, {
+  const delivered = await broadcastToTenant(tenantId, text, {
     reply_markup: buildKeyboard(event),
   });
 
   // Only stamp telegram_notified_at after a successful send to any chat.
-  // Failure → next tick will retry the same email (idempotent + safe).
+  // Failure → next tick will retry the same email (idempotent + safe). The
+  // stamp is tenant-scoped so it runs in the tenant's context.
   if (delivered) {
     try {
-      await markPostApplicationMessageNotified(event.messageId);
+      await runWithRequestContext({ tenantId }, () =>
+        markPostApplicationMessageNotified(event.messageId),
+      );
     } catch (err) {
       logger.warn("Failed to mark Gmail message as notified", {
         messageId: event.messageId,
@@ -193,9 +213,13 @@ async function handleProcessedMessage(
   }
 }
 
-async function handleHealthEvent(event: GmailSyncHealthEvent): Promise<void> {
+async function handleHealthEvent(
+  tenantId: string,
+  event: GmailSyncHealthEvent,
+): Promise<void> {
   if (event.type === "account_failed" && event.shouldAlertUser) {
-    await broadcast(
+    await broadcastToTenant(
+      tenantId,
       `⚠️ <b>Gmail sync failing</b>\n\n` +
         `Account: <code>${escapeHtml(event.accountKey)}</code>\n` +
         `Last error:\n<code>${escapeHtml(event.error.slice(0, 300))}</code>\n\n` +
@@ -210,7 +234,8 @@ async function handleHealthEvent(event: GmailSyncHealthEvent): Promise<void> {
       event.totals.classified > 0 || event.totals.errored > 0;
     if (!meaningful) return;
 
-    await broadcast(
+    await broadcastToTenant(
+      tenantId,
       `🔁 <b>Gmail sync done</b>\n\n` +
         `Accounts: ${event.accountCount}\n` +
         `Discovered: ${event.totals.discovered}\n` +
@@ -226,12 +251,16 @@ async function handleHealthEvent(event: GmailSyncHealthEvent): Promise<void> {
 export function startGmailNotificationSubscriptions(): void {
   if (!processedUnsub) {
     processedUnsub = subscribeToGmailProcessedMessages((event) => {
-      void handleProcessedMessage(event);
+      // Emitted synchronously inside the syncing tenant's context — capture it
+      // now, before the async handler detaches from the emit call stack.
+      const tenantId = getActiveTenantId();
+      void handleProcessedMessage(tenantId, event);
     });
   }
   if (!healthUnsub) {
     healthUnsub = subscribeToGmailSyncHealth((event) => {
-      void handleHealthEvent(event);
+      const tenantId = getActiveTenantId();
+      void handleHealthEvent(tenantId, event);
     });
   }
 }

@@ -86,8 +86,8 @@ export async function initializeTelegramBot(): Promise<void> {
       drop_pending_updates: true,
     });
 
-    // Start proactive notifications
-    startNotificationSubscriptions();
+    // Start proactive notifications (per-tenant pipeline subscriptions)
+    await startNotificationSubscriptions();
     startGmailNotificationSubscriptions();
   } catch (error) {
     logger.error("Failed to start Telegram bot", {

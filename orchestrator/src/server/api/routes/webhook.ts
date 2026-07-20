@@ -6,6 +6,7 @@ import { runWithRequestContext } from "@infra/request-context";
 import { isDemoMode } from "@server/config/demo";
 import { runPipeline } from "@server/pipeline/index";
 import { simulatePipelineRun } from "@server/services/demo-simulator";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { type Request, type Response, Router } from "express";
 
 export const webhookRouter = Router();
@@ -48,8 +49,11 @@ webhookRouter.post("/trigger", async (req: Request, res: Response) => {
       );
     }
 
-    // Start pipeline in background
-    runWithRequestContext({}, () => {
+    // Start pipeline in background. The webhook is a public, unauthenticated
+    // trigger with no tenant identity, so it is scoped to the default tenant
+    // (preserves single-tenant behavior; a per-tenant webhook would need its
+    // own tenant-scoped secret).
+    runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, () => {
       runPipeline().catch((error) => {
         logger.error("Webhook-triggered pipeline run failed", error);
       });

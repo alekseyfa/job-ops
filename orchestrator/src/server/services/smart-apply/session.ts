@@ -62,6 +62,10 @@ const SUBMIT_WATCHER_INTERVAL_MS = 4_000;
 // Single-session guard: only one headed Firefox can use display :99 at a time.
 interface ActiveBrowserSession {
   sessionId: string;
+  // The tenant that started this session. Background timers (submit watcher,
+  // TTL teardown) fire outside any request context, so they re-establish this
+  // tenant before touching tenant-scoped repositories.
+  tenantId: string;
   browser: Browser;
   context: BrowserContext;
   page: Page;
@@ -75,15 +79,20 @@ let startupCleanupDone = false;
 async function ensureStartupCleanup(): Promise<void> {
   if (startupCleanupDone) return;
   startupCleanupDone = true;
-  await runWithRequestContext({}, async () => {
-    const expired = await expireStaleSessions();
-    if (expired > 0) {
-      logger.info(
-        "Smart Apply: expired stale sessions from previous container life",
-        { count: expired },
-      );
-    }
-  });
+  // Startup maintenance sweeps every tenant's stale sessions.
+  const { listTenants } = await import("../../repositories/tenants");
+  const tenants = await listTenants();
+  for (const tenant of tenants) {
+    await runWithRequestContext({ tenantId: tenant.id }, async () => {
+      const expired = await expireStaleSessions();
+      if (expired > 0) {
+        logger.info(
+          "Smart Apply: expired stale sessions from previous container life",
+          { tenantId: tenant.id, count: expired },
+        );
+      }
+    });
+  }
 }
 
 async function teardownActive(reason: string): Promise<void> {
@@ -263,6 +272,7 @@ function startSubmitWatcher(
   sessionId: string,
   ats: "greenhouse" | "ashby" | "lever",
   jobId: string,
+  tenantId: string,
 ): ReturnType<typeof setInterval> {
   return setInterval(async () => {
     try {
@@ -275,7 +285,7 @@ function startSubmitWatcher(
         url,
       });
 
-      await runWithRequestContext({}, async () => {
+      await runWithRequestContext({ tenantId }, async () => {
         await updateSmartApplySession(sessionId, {
           status: "submitted",
           submittedAt: Date.now(),
@@ -359,6 +369,10 @@ export async function startSmartApplySession(args: {
     };
   }
 
+  // Capture the tenant now (we're inside the request context). Background timers
+  // spawned below outlive this context and must re-establish it.
+  const tenantId = getActiveTenantId();
+
   const session = await createSmartApplySession({
     jobId: args.jobId,
     applyUrl: verdict.applyUrl,
@@ -366,8 +380,8 @@ export async function startSmartApplySession(args: {
 
   // Run the actual browser work in the background so the caller (Telegram
   // / HTTP) gets a fast response.
-  void runWithRequestContext({}, () =>
-    runBrowserSession(session, verdict.ats, verdict.applyUrl, job),
+  void runWithRequestContext({ tenantId }, () =>
+    runBrowserSession(session, verdict.ats, verdict.applyUrl, job, tenantId),
   );
 
   return { ok: true, session: await toDto(session) };
@@ -378,6 +392,7 @@ async function runBrowserSession(
   ats: SmartApplyAts,
   applyUrl: string,
   job: Awaited<ReturnType<typeof getJobById>>,
+  tenantId: string,
 ): Promise<void> {
   if (!job) {
     await updateSmartApplySession(session.id, {
@@ -424,11 +439,12 @@ async function runBrowserSession(
     const { token } = createChallengeViewerSession({ ttlMs: VIEWER_TTL_MS });
     const expiresAt = Date.now() + VIEWER_TTL_MS;
 
-    const watcher = startSubmitWatcher(session.id, ats, job.id);
+    const watcher = startSubmitWatcher(session.id, ats, job.id, tenantId);
 
     // Register the active session BEFORE marking ready so polls see it.
     active = {
       sessionId: session.id,
+      tenantId,
       browser,
       context,
       page,
@@ -439,7 +455,7 @@ async function runBrowserSession(
     // Auto-teardown after viewer expiry if user never submits.
     setTimeout(() => {
       if (active?.sessionId === session.id) {
-        void runWithRequestContext({}, async () => {
+        void runWithRequestContext({ tenantId }, async () => {
           const current = await getSmartApplySessionById(session.id);
           if (current?.status === "ready") {
             await updateSmartApplySession(session.id, { status: "expired" });

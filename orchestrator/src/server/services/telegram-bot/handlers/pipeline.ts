@@ -15,7 +15,7 @@ import {
 } from "../../../pipeline/orchestrator";
 import * as settingsRepo from "../../../repositories/settings";
 import { subscribeToProgress, getProgress } from "../../../pipeline/progress";
-import { getPipelineSchedulerStatus } from "../../pipeline-scheduler";
+import { getTenantScheduleStatus } from "../../pipeline-scheduler";
 import { awaitingInput } from "../awaiting-input";
 import { formatPipelineProgress, escapeHtml } from "../formatting";
 
@@ -95,7 +95,7 @@ export function registerPipelineHandlers(bot: Bot): void {
   bot.callbackQuery("p:status", async (ctx) => {
     await ctx.answerCallbackQuery();
     const status = getPipelineStatus();
-    const scheduler = getPipelineSchedulerStatus();
+    const scheduler = await getTenantScheduleStatus();
     const progress = getProgress();
 
     let text = "<b>🔍 Pipeline</b>\n\n";

@@ -1,8 +1,9 @@
 import { logger } from "@infra/logger";
+import { getTenantId, getUserId } from "@infra/request-context";
 import { InlineKeyboard } from "grammy";
 import type { Bot } from "grammy";
 import * as settingsRepo from "../../../repositories/settings";
-import { initializePipelineScheduler, getPipelineSchedulerStatus } from "../../pipeline-scheduler";
+import { initializePipelineScheduler, getTenantScheduleStatus } from "../../pipeline-scheduler";
 import { generateLinkCode } from "../auth";
 import { awaitingInput } from "../awaiting-input";
 import { escapeHtml } from "../formatting";
@@ -151,7 +152,7 @@ export function registerSettingsHandlers(bot: Bot): void {
       const notifVal = await settingsRepo.getSetting("telegramNotificationsEnabled");
       const notifEnabled = notifVal !== "0" && notifVal !== "false";
       const userTz = await settingsRepo.getSetting("userTimezone") || "Europe/Berlin";
-      const scheduler = getPipelineSchedulerStatus();
+      const scheduler = await getTenantScheduleStatus();
 
       const hour = parseInt(scheduleHour, 10);
       const localTime = formatLocalHour(hour);
@@ -349,13 +350,20 @@ export function registerSettingsHandlers(bot: Bot): void {
     }
   });
 
-  // Generate link code
+  // Generate link code — binds to the CURRENT chat's user+tenant, so a code
+  // shared with another chat joins THIS workspace (hybrid multi-chat model).
   bot.callbackQuery("x:link", async (ctx) => {
     try {
-      const code = generateLinkCode();
+      const userId = getUserId();
+      const tenantId = getTenantId();
+      if (!userId || !tenantId) {
+        await ctx.answerCallbackQuery("❌ Session expired — reopen the menu.");
+        return;
+      }
+      const code = generateLinkCode({ userId, tenantId });
       await ctx.answerCallbackQuery();
       await ctx.editMessageText(
-        `<b>🔗 Link Code</b>\n\n<code>${code}</code>\n\n<i>Tap the code above to copy it.</i>\n\nSend this to another user. Expires in 5 minutes.`,
+        `<b>🔗 Link Code</b>\n\n<code>${code}</code>\n\n<i>Tap the code above to copy it.</i>\n\nSend this to another chat to give it access to your workspace. Expires in 5 minutes.`,
         {
           parse_mode: "HTML",
           reply_markup: new InlineKeyboard().text("◀️ Settings", "x:menu"),

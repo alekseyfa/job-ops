@@ -508,6 +508,28 @@ export const authSessions = sqliteTable(
   }),
 );
 
+// Maps a Telegram chat to a user + tenant. Replaces the flat, single-tenant
+// `telegramAuthorizedChatIds` setting. A chat resolves to exactly one tenant
+// (hybrid 1:1 model — several chats MAY point at one tenant, no roles yet).
+export const telegramLinks = sqliteTable(
+  "telegram_links",
+  {
+    chatId: integer("chat_id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+    lastSeenAt: text("last_seen_at"),
+  },
+  (table) => ({
+    tenantIndex: index("idx_telegram_links_tenant_id").on(table.tenantId),
+    userIndex: index("idx_telegram_links_user_id").on(table.userId),
+  }),
+);
+
 export const designResumeDocuments = sqliteTable("design_resume_documents", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id")
@@ -891,6 +913,8 @@ export const tracerClickEvents = sqliteTable(
 
 export type UserRow = typeof users.$inferSelect;
 export type NewUserRow = typeof users.$inferInsert;
+export type TelegramLinkRow = typeof telegramLinks.$inferSelect;
+export type NewTelegramLinkRow = typeof telegramLinks.$inferInsert;
 export type TenantRow = typeof tenants.$inferSelect;
 export type NewTenantRow = typeof tenants.$inferInsert;
 export type TenantMembershipRow = typeof tenantMemberships.$inferSelect;

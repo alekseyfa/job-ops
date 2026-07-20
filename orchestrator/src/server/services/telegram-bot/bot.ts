@@ -1,11 +1,12 @@
 import { logger } from "@infra/logger";
+import { runWithRequestContext } from "@infra/request-context";
+import { resolveChatContext } from "@server/repositories/telegram-links";
 import { Bot, type Context, InlineKeyboard } from "grammy";
 import {
-  addAuthorizedChatId,
   clearLinkAttempts,
   isAuthorized,
+  redeemLinkCode,
   registerLinkAttempt,
-  validateLinkCode,
 } from "./auth";
 import { sendFullChangelog } from "./changelog-notifications";
 
@@ -39,7 +40,13 @@ export function createBot(token: string): Bot {
     });
   });
 
-  // Auth middleware — runs before all handlers
+  // Auth + tenant-context middleware — runs before all handlers.
+  //
+  // This is the ONE place the bot establishes a request context. Because grammy
+  // middleware is linear and next() is awaited, wrapping next() in
+  // runWithRequestContext propagates {userId, tenantId} via AsyncLocalStorage to
+  // EVERY downstream handler and repository call — so the bot is tenant-isolated
+  // with a single wrapper. Unlinked chats are rejected before any DB read.
   botInstance.use(async (ctx, next) => {
     const chatId = ctx.chat?.id;
     if (!chatId) return;
@@ -47,24 +54,38 @@ export function createBot(token: string): Bot {
     const text = ctx.message?.text || "";
     const command = extractCommand(text);
     if (command && PUBLIC_COMMANDS.has(command)) {
+      // /start, /link, /help manage their own context (they run pre-link).
       return next();
     }
 
-    if (!(await isAuthorized(chatId))) {
+    const chatContext = await resolveChatContext(chatId);
+    if (!chatContext) {
       await ctx.reply(
-        "🔒 Not authorized. Send /link <code> with your link code from Job Ops Settings.",
+        "🔒 Not authorized. Open Job Ops → Settings → Link Telegram to get a code, then send /link <code>.",
       );
       return;
     }
 
-    return next();
+    return runWithRequestContext(
+      {
+        tenantId: chatContext.tenantId,
+        userId: chatContext.userId,
+        requestId: `tg:${chatId}:${ctx.update.update_id}`,
+      },
+      () => next(),
+    );
   });
 
   // /start command
   botInstance.command("start", async (ctx) => {
     const chatId = ctx.chat.id;
-    if (await isAuthorized(chatId)) {
-      await sendMainMenu(ctx);
+    const chatContext = await resolveChatContext(chatId);
+    if (chatContext) {
+      // Establish tenant context so the menu's stats/greeting are scoped.
+      await runWithRequestContext(
+        { tenantId: chatContext.tenantId, userId: chatContext.userId },
+        () => sendMainMenu(ctx),
+      );
     } else {
       await ctx.reply(
         "👋 Welcome to Job Ops Bot!\n\n" +
@@ -93,11 +114,19 @@ export function createBot(token: string): Bot {
       return;
     }
 
-    if (validateLinkCode(code)) {
+    const binding = await redeemLinkCode(chatId, code);
+    if (binding) {
       clearLinkAttempts(chatId);
-      await addAuthorizedChatId(chatId);
+      // Ensure this tenant now receives proactive pipeline notifications
+      // (no restart needed). Idempotent.
+      const { ensureTenantSubscribed } = await import("./notifications");
+      ensureTenantSubscribed(binding.tenantId);
       await ctx.reply("✅ Linked successfully! You can now use the bot.");
-      await sendMainMenu(ctx);
+      // Render the menu inside the freshly-bound tenant context.
+      await runWithRequestContext(
+        { tenantId: binding.tenantId, userId: binding.userId },
+        () => sendMainMenu(ctx),
+      );
       // Send changelog to newly linked user so they know about recent features
       sendFullChangelog(chatId).catch((err) => {
         logger.warn("Failed to send full changelog to new user", {

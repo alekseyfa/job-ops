@@ -12,8 +12,10 @@
  */
 
 import { logger } from "@infra/logger";
+import { runWithRequestContext } from "@infra/request-context";
 import { sanitizeUnknown } from "@infra/sanitize";
 import { deleteStaleJobs } from "../repositories/jobs";
+import { listTenants } from "../repositories/tenants";
 import { createScheduler } from "../utils/scheduler";
 
 const STALE_JOB_DAYS = 90;
@@ -22,21 +24,32 @@ const CLEANUP_HOUR_UTC = 3;
 export const staleJobsCleanupScheduler = createScheduler(
   "stale-jobs-cleanup",
   async () => {
-    try {
-      const deleted = await deleteStaleJobs(STALE_JOB_DAYS);
-      if (deleted > 0) {
-        logger.info("Stale job cleanup completed", {
-          deleted,
-          olderThanDays: STALE_JOB_DAYS,
-        });
-      } else {
-        logger.debug("Stale job cleanup: no stale jobs found", {
+    // deleteStaleJobs is tenant-scoped, so sweep each tenant in its own context.
+    const tenants = await listTenants();
+    let totalDeleted = 0;
+    for (const tenant of tenants) {
+      try {
+        const deleted = await runWithRequestContext(
+          { tenantId: tenant.id },
+          () => deleteStaleJobs(STALE_JOB_DAYS),
+        );
+        totalDeleted += deleted;
+      } catch (err) {
+        logger.error("Stale job cleanup failed", {
+          tenantId: tenant.id,
+          error: sanitizeUnknown(err),
           olderThanDays: STALE_JOB_DAYS,
         });
       }
-    } catch (err) {
-      logger.error("Stale job cleanup failed", {
-        error: sanitizeUnknown(err),
+    }
+    if (totalDeleted > 0) {
+      logger.info("Stale job cleanup completed", {
+        deleted: totalDeleted,
+        tenants: tenants.length,
+        olderThanDays: STALE_JOB_DAYS,
+      });
+    } else {
+      logger.debug("Stale job cleanup: no stale jobs found", {
         olderThanDays: STALE_JOB_DAYS,
       });
     }

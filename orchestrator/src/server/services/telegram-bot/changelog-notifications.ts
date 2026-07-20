@@ -6,8 +6,12 @@
  */
 
 import { logger } from "@infra/logger";
+import { runWithRequestContext } from "@infra/request-context";
+import {
+  getChatIdsForTenant,
+  listTenantIdsWithLinkedChats,
+} from "../../repositories/telegram-links";
 import * as settingsRepo from "../../repositories/settings";
-import { getAuthorizedChatIds } from "./auth";
 import { getBot } from "./bot";
 import {
   formatChangelogMessage,
@@ -26,25 +30,37 @@ async function setLastSentVersion(version: string): Promise<void> {
 }
 
 /**
- * Send unseen changelog entries to all authorized chats and pin the most
- * recent one.  Each version goes out as its OWN message so Telegram's
- * 4096-character message limit can never bite — previously the formatter
- * packed every unseen version into a single message and silently failed
- * with "Bad Request: message is too long" the moment the cursor drifted
- * a few releases behind.
- *
- * Called on bot startup and after a new user links.
+ * Send unseen changelog entries to every tenant's linked chats. The
+ * last-sent-version cursor is per-tenant, so each workspace independently
+ * catches up. Called on bot startup.
  */
 export async function sendChangelogIfNeeded(): Promise<void> {
   const bot = getBot();
   if (!bot) return;
 
+  const tenantIds = await listTenantIdsWithLinkedChats();
+  for (const tenantId of tenantIds) {
+    await runWithRequestContext({ tenantId }, () =>
+      sendChangelogForTenant(tenantId),
+    ).catch((err) =>
+      logger.warn("Changelog send failed for tenant", {
+        tenantId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+  }
+}
+
+/** Per-tenant changelog catch-up. Runs inside the tenant's request context. */
+async function sendChangelogForTenant(tenantId: string): Promise<void> {
+  const bot = getBot();
+  if (!bot) return;
+
   const lastSent = await getLastSentVersion();
   const entries = getChangelogSince(lastSent);
-
   if (entries.length === 0) return;
 
-  const chatIds = await getAuthorizedChatIds();
+  const chatIds = new Set(await getChatIdsForTenant(tenantId));
   if (chatIds.size === 0) return;
 
   // entries are newest-first.  We send them in chronological order

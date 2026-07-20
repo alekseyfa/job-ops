@@ -19,6 +19,7 @@ import { postApplicationProvidersRouter } from "./routes/post-application-provid
 import { postApplicationReviewRouter } from "./routes/post-application-review";
 import { profileRouter } from "./routes/profile";
 import { settingsRouter } from "./routes/settings";
+import { telegramRouter } from "./routes/telegram";
 import { tracerLinksRouter } from "./routes/tracer-links";
 import { visaSponsorsRouter } from "./routes/visa-sponsors";
 import { webhookRouter } from "./routes/webhook";
@@ -44,5 +45,6 @@ apiRouter.use("/backups", backupRouter);
 apiRouter.use("/tracer-links", tracerLinksRouter);
 apiRouter.use("/workspaces", workspacesRouter);
 apiRouter.use("/auth", authRouter);
+apiRouter.use("/telegram", telegramRouter);
 apiRouter.use("/linkedin-apply", linkedInApplyRouter);
 apiRouter.use("/", extractorHealthRouter);
