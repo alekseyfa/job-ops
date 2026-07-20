@@ -49,7 +49,12 @@ export const CHANGELOG: ChangelogEntry[] = [
       {
         title: "🧭 Easier to find your way around",
         description:
-          "Type / in the chat to see all commands, and /help now explains what the bot can do. More discoverability improvements are on the way.",
+          "Type / in the chat to see all commands, and /help now explains what the bot can do. The Jobs list gained Discovered and All tabs plus a Search button to find any job by title, company, or location.",
+      },
+      {
+        title: "⏭ One-tap triage",
+        description:
+          "After you Mark Applied, Skip, or Block a ready job, the bot jumps straight to the next one and shows how many are left — so you can clear your ready queue one tap at a time instead of scrolling back to the list.",
       },
       {
         title: "🔒 Security hardening",
