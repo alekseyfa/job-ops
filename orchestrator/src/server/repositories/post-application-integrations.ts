@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { openJson, sealJson } from "@infra/secret-box";
 import type {
   PostApplicationIntegration,
   PostApplicationIntegrationStatus,
@@ -35,16 +36,19 @@ function asCredentials(value: unknown): IntegrationCredentials | null {
   return value as IntegrationCredentials;
 }
 
-function mapRowToIntegration(
+// Credentials are envelope-encrypted at rest (secret-box). Decrypt on read;
+// legacy plaintext rows pass through and get sealed on their next write.
+async function mapRowToIntegration(
   row: typeof postApplicationIntegrations.$inferSelect,
-): PostApplicationIntegration {
+): Promise<PostApplicationIntegration> {
+  const decrypted = await openJson(row.credentials);
   return {
     id: row.id,
     provider: row.provider,
     accountKey: row.accountKey,
     displayName: row.displayName,
     status: row.status as PostApplicationIntegrationStatus,
-    credentials: asCredentials(row.credentials),
+    credentials: asCredentials(decrypted),
     lastConnectedAt: row.lastConnectedAt,
     lastSyncedAt: row.lastSyncedAt,
     lastError: row.lastError,
@@ -72,7 +76,7 @@ export async function listConnectedPostApplicationIntegrations(
         eq(postApplicationIntegrations.status, "connected"),
       ),
     );
-  return rows.map(mapRowToIntegration);
+  return Promise.all(rows.map(mapRowToIntegration));
 }
 
 export async function getPostApplicationIntegration(
@@ -91,7 +95,7 @@ export async function getPostApplicationIntegration(
       ),
     );
 
-  return row ? mapRowToIntegration(row) : null;
+  return row ? await mapRowToIntegration(row) : null;
 }
 
 export async function upsertConnectedPostApplicationIntegration(
@@ -111,7 +115,7 @@ export async function upsertConnectedPostApplicationIntegration(
       .set({
         displayName: input.displayName ?? existing.displayName,
         status: "connected",
-        credentials: input.credentials,
+        credentials: await sealJson(input.credentials),
         lastConnectedAt: nowEpoch,
         lastError: null,
         updatedAt: nowIso,
@@ -138,7 +142,7 @@ export async function upsertConnectedPostApplicationIntegration(
     accountKey: input.accountKey,
     displayName: input.displayName ?? null,
     status: "connected",
-    credentials: input.credentials,
+    credentials: await sealJson(input.credentials),
     lastConnectedAt: nowEpoch,
     lastError: null,
     createdAt: nowIso,
@@ -188,6 +192,14 @@ export async function updatePostApplicationIntegrationSyncState(
   if (!existing) return null;
 
   const nowIso = new Date().toISOString();
+  // Seal credentials when provided; null means "clear" (disconnect), undefined
+  // means "leave unchanged".
+  const sealedCredentials =
+    input.credentials === undefined
+      ? undefined
+      : input.credentials === null
+        ? null
+        : await sealJson(input.credentials);
   await db
     .update(postApplicationIntegrations)
     .set({
@@ -196,8 +208,8 @@ export async function updatePostApplicationIntegrationSyncState(
         ? { lastSyncedAt: input.lastSyncedAt }
         : {}),
       ...(input.lastError !== undefined ? { lastError: input.lastError } : {}),
-      ...(input.credentials !== undefined
-        ? { credentials: input.credentials }
+      ...(sealedCredentials !== undefined
+        ? { credentials: sealedCredentials }
         : {}),
       updatedAt: nowIso,
     })
