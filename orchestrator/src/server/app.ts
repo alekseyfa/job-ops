@@ -230,7 +230,11 @@ export function createAuthGuard() {
   ) => {
     void (async () => {
       if (!requiresAuth(req.method, req.path)) {
-        next();
+        // Public routes carry no authenticated tenant. They operate on the
+        // default tenant (e.g. /api/profile/status during first-run onboarding),
+        // so establish that context — getActiveTenantId() is fail-closed and
+        // would otherwise throw when a public handler reaches a scoped repo.
+        runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, () => next());
         return;
       }
 

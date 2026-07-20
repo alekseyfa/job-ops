@@ -1,8 +1,18 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Repositories are fail-closed on tenant context now, so every repo call runs
+// inside the default tenant's context. request-context is imported dynamically
+// (after vi.resetModules) so we share the SAME AsyncLocalStorage instance the
+// re-imported repos use — a static import would bind a stale ALS.
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 /**
  * Stale jobs cleanup invariant — load-bearing data-safety contract:
@@ -50,12 +60,14 @@ describe.sequential("deleteStaleJobs invariant", () => {
     status: (typeof SAFE_STATUSES)[number] | (typeof PRUNABLE_STATUSES)[number],
     ageDays: number,
   ): Promise<string> {
-    const created = await jobsRepo.createJob({
-      source: "manual",
-      title: `Job ${suffix}`,
-      employer: "Acme",
-      jobUrl: `https://example.com/job/${suffix}`,
-    });
+    const created = await asTenant(() =>
+      jobsRepo.createJob({
+        source: "manual",
+        title: `Job ${suffix}`,
+        employer: "Acme",
+        jobUrl: `https://example.com/job/${suffix}`,
+      }),
+    );
     const updatedAt = new Date(
       Date.now() - ageDays * 24 * 60 * 60 * 1000,
     ).toISOString();
@@ -88,7 +100,7 @@ describe.sequential("deleteStaleJobs invariant", () => {
     const oldDiscovered = await seedJob("old-discovered", "discovered", 365);
     const oldSkipped = await seedJob("old-skipped", "skipped", 365);
 
-    const deleted = await jobsRepo.deleteStaleJobs(90);
+    const deleted = await asTenant(() => jobsRepo.deleteStaleJobs(90));
 
     const statuses = await getStatusMap([
       oldApplied,
@@ -119,7 +131,7 @@ describe.sequential("deleteStaleJobs invariant", () => {
     const freshSkipped = await seedJob("fs", "skipped", 1);
     const freshExpired = await seedJob("fe", "expired", 1);
 
-    const deleted = await jobsRepo.deleteStaleJobs(90);
+    const deleted = await asTenant(() => jobsRepo.deleteStaleJobs(90));
 
     const statuses = await getStatusMap([
       oldDiscovered,
@@ -146,7 +158,7 @@ describe.sequential("deleteStaleJobs invariant", () => {
     const hundred = await seedJob("hundred", "discovered", 100);
 
     // 90-day cutoff: only the 100-day-old job goes.
-    const deleted90 = await jobsRepo.deleteStaleJobs(90);
+    const deleted90 = await asTenant(() => jobsRepo.deleteStaleJobs(90));
     expect(deleted90).toBe(1);
 
     let statuses = await getStatusMap([ten, sixty, hundred]);
@@ -155,7 +167,7 @@ describe.sequential("deleteStaleJobs invariant", () => {
     expect(statuses[hundred]).toBeNull();
 
     // 30-day cutoff: the 60-day-old one also goes.
-    const deleted30 = await jobsRepo.deleteStaleJobs(30);
+    const deleted30 = await asTenant(() => jobsRepo.deleteStaleJobs(30));
     expect(deleted30).toBe(1);
 
     statuses = await getStatusMap([ten, sixty]);
@@ -167,7 +179,7 @@ describe.sequential("deleteStaleJobs invariant", () => {
     await seedJob("fresh", "discovered", 1);
     await seedJob("ancient-applied", "applied", 1000);
 
-    const deleted = await jobsRepo.deleteStaleJobs(90);
+    const deleted = await asTenant(() => jobsRepo.deleteStaleJobs(90));
     expect(deleted).toBe(0);
   });
 });

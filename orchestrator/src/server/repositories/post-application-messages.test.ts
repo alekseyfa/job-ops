@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe.sequential("post-application message upsert transition semantics", () => {
@@ -16,7 +17,11 @@ describe.sequential("post-application message upsert transition semantics", () =
       | "manual_linked"
       | "ignored";
   }) {
-    return upsertPostApplicationMessage({
+    // Repositories are fail-closed on tenant context. Import request-context
+    // dynamically (post vi.resetModules) to share the repos' AsyncLocalStorage.
+    const { runWithRequestContext } = await import("@infra/request-context");
+    return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, () =>
+    upsertPostApplicationMessage({
       provider: "gmail",
       accountKey: "default",
       integrationId: null,
@@ -40,7 +45,8 @@ describe.sequential("post-application message upsert transition semantics", () =
       stageEventPayload: { note: "test" },
       processingStatus: args.processingStatus,
       matchedJobId: null,
-    });
+    }),
+    );
   }
 
   beforeEach(async () => {

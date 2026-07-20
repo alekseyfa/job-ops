@@ -37,6 +37,28 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.20.0",
+    date: "2026-07-20",
+    items: [
+      {
+        title: "👥 Your own private workspace",
+        description:
+          "The bot is now fully multi-user: each linked chat sees only its own jobs, settings, and pipeline. Your data is isolated from everyone else's, and your scheduled runs and email sync work on their own — not just the first account's.",
+        tip: "Open Job Ops → Settings → get a link code, then send /link <code> to connect this chat to your workspace. Share a code from Settings → 🔗 Link Code to add another chat to the same workspace.",
+      },
+      {
+        title: "🧭 Easier to find your way around",
+        description:
+          "Type / in the chat to see all commands, and /help now explains what the bot can do. More discoverability improvements are on the way.",
+      },
+      {
+        title: "🔒 Security hardening",
+        description:
+          "Tightened how credentials and links are handled behind the scenes so your account details and tracking links stay private.",
+      },
+    ],
+  },
+  {
     version: "1.19.0",
     date: "2026-07-07",
     items: [

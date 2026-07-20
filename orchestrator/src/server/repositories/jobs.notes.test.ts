@@ -1,8 +1,17 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Repositories are fail-closed on tenant context — run each test body inside
+// the default tenant's request context. request-context is imported dynamically
+// (after vi.resetModules) to share the same AsyncLocalStorage the repos use.
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 describe.sequential("jobs repository job notes", () => {
   let tempDir: string;
@@ -28,69 +37,71 @@ describe.sequential("jobs repository job notes", () => {
     vi.clearAllMocks();
   });
 
-  it("persists notes and orders them by updatedAt desc", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Backend Engineer",
-      employer: "Acme",
-      jobUrl: "https://example.com/job/repo-notes",
-    });
+  it("persists notes and orders them by updatedAt desc", async () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Backend Engineer",
+        employer: "Acme",
+        jobUrl: "https://example.com/job/repo-notes",
+      });
 
-    const first = await jobsRepo.createJobNote({
-      jobId: job.id,
-      title: "Why this company",
-      content: "Mission and product fit.",
-    });
+      const first = await jobsRepo.createJobNote({
+        jobId: job.id,
+        title: "Why this company",
+        content: "Mission and product fit.",
+      });
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const second = await jobsRepo.createJobNote({
-      jobId: job.id,
-      title: "Interview contacts",
-      content: "Recruiter: Jamie Lee",
-    });
+      const second = await jobsRepo.createJobNote({
+        jobId: job.id,
+        title: "Interview contacts",
+        content: "Recruiter: Jamie Lee",
+      });
 
-    await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const updatedFirst = await jobsRepo.updateJobNote({
-      jobId: job.id,
-      noteId: first.id,
-      title: "Why this company",
-      content: "Mission, product fit, and growth opportunity.",
-    });
+      const updatedFirst = await jobsRepo.updateJobNote({
+        jobId: job.id,
+        noteId: first.id,
+        title: "Why this company",
+        content: "Mission, product fit, and growth opportunity.",
+      });
 
-    expect(updatedFirst).not.toBeNull();
-    expect(updatedFirst?.updatedAt).not.toBe(first.updatedAt);
+      expect(updatedFirst).not.toBeNull();
+      expect(updatedFirst?.updatedAt).not.toBe(first.updatedAt);
 
-    const notes = await jobsRepo.listJobNotes(job.id);
+      const notes = await jobsRepo.listJobNotes(job.id);
 
-    expect(notes.map((note) => note.id)).toEqual([first.id, second.id]);
-    expect(notes[0]?.content).toContain("growth opportunity");
-  });
+      expect(notes.map((note) => note.id)).toEqual([first.id, second.id]);
+      expect(notes[0]?.content).toContain("growth opportunity");
+    }));
 
-  it("cascades note deletion when the parent job is removed", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Platform Engineer",
-      employer: "Beta",
-      jobUrl: "https://example.com/job/repo-cascade",
-    });
+  it("cascades note deletion when the parent job is removed", async () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Platform Engineer",
+        employer: "Beta",
+        jobUrl: "https://example.com/job/repo-cascade",
+      });
 
-    await jobsRepo.createJobNote({
-      jobId: job.id,
-      title: "Recruiter contact",
-      content: "alex@example.com",
-    });
+      await jobsRepo.createJobNote({
+        jobId: job.id,
+        title: "Recruiter contact",
+        content: "alex@example.com",
+      });
 
-    const notesBeforeDelete = await jobsRepo.listJobNotes(job.id);
-    expect(notesBeforeDelete).toHaveLength(1);
+      const notesBeforeDelete = await jobsRepo.listJobNotes(job.id);
+      expect(notesBeforeDelete).toHaveLength(1);
 
-    await db.delete(schema.jobs).where(eq(schema.jobs.id, job.id)).run();
+      await db.delete(schema.jobs).where(eq(schema.jobs.id, job.id)).run();
 
-    const notesAfterDelete = await jobsRepo.listJobNotes(job.id);
-    expect(notesAfterDelete).toHaveLength(0);
+      const notesAfterDelete = await jobsRepo.listJobNotes(job.id);
+      expect(notesAfterDelete).toHaveLength(0);
 
-    const remainingRows = await db.select().from(schema.jobNotes);
-    expect(remainingRows).toHaveLength(0);
-  });
+      const remainingRows = await db.select().from(schema.jobNotes);
+      expect(remainingRows).toHaveLength(0);
+    }));
 });

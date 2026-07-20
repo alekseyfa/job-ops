@@ -4,8 +4,10 @@
 
 import "./config/env";
 import { logger } from "@infra/logger";
+import { runWithRequestContext } from "@infra/request-context";
 import { installProxyDispatcher } from "./config/proxy";
 import { sanitizeUnknown } from "@infra/sanitize";
+import { DEFAULT_TENANT_ID } from "./tenancy/constants";
 import { createApp } from "./app";
 import { initializeExtractorRegistry } from "./extractors/registry";
 import { deleteExpiredOrRevokedAuthSessions } from "./repositories/auth-sessions";
@@ -98,11 +100,20 @@ async function startServer() {
       });
     }
 
-    // Initialize backup service (load settings and start scheduler if enabled)
+    // Initialize backup service (load settings and start scheduler if enabled).
+    // Backup config is global (one DB, one backup schedule), so the settings
+    // reads run in the default-tenant context — getActiveTenantId() is now
+    // fail-closed and would throw without an explicit tenant here.
     try {
-      const backupEnabled = await settingsRepo.getSetting("backupEnabled");
-      const backupHour = await settingsRepo.getSetting("backupHour");
-      const backupMaxCount = await settingsRepo.getSetting("backupMaxCount");
+      const { backupEnabled, backupHour, backupMaxCount } =
+        await runWithRequestContext(
+          { tenantId: DEFAULT_TENANT_ID },
+          async () => ({
+            backupEnabled: await settingsRepo.getSetting("backupEnabled"),
+            backupHour: await settingsRepo.getSetting("backupHour"),
+            backupMaxCount: await settingsRepo.getSetting("backupMaxCount"),
+          }),
+        );
 
       const parsedHour = backupHour ? parseInt(backupHour, 10) : NaN;
       const parsedMaxCount = backupMaxCount
