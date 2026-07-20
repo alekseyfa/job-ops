@@ -115,6 +115,39 @@ export function createBot(token: string): Bot {
     await sendMainMenu(ctx);
   });
 
+  // /help command — /help is whitelisted as a public command, so it must have a
+  // handler (otherwise typing it is silent). Works for unlinked users too.
+  botInstance.command("help", async (ctx) => {
+    const linked = ctx.chat ? await isAuthorized(ctx.chat.id) : false;
+    const lines = [
+      "<b>🤖 Job Ops Bot — Help</b>",
+      "",
+      "<b>Commands</b>",
+      "/menu — main menu (jobs, pipeline, stats, settings)",
+      "/search &lt;keyword&gt; — find jobs by title, company, or location",
+      "/insights — application funnel &amp; trends",
+      "/interview — interview prep (STAR stories, Q&amp;A)",
+      "/sync — sync application emails now",
+      "/gmail — email sync status",
+      "/changelog — what's new",
+      "/help — this message",
+    ];
+    if (!linked) {
+      lines.push(
+        "",
+        "<b>Not linked yet?</b>",
+        "Open Job Ops → Settings → get a link code, then send:",
+        "<code>/link &lt;code&gt;</code>",
+      );
+    }
+    const keyboard = new InlineKeyboard();
+    if (linked) keyboard.text("🏠 Menu", "m:menu");
+    await ctx.reply(lines.join("\n"), {
+      parse_mode: "HTML",
+      reply_markup: linked ? keyboard : undefined,
+    });
+  });
+
   // m:menu callback — every "◀️ Menu" button across the bot lands here.
   // Single canonical implementation in this file.
   botInstance.callbackQuery("m:menu", async (ctx) => {
@@ -203,13 +236,24 @@ export function createBot(token: string): Bot {
 export async function sendMainMenu(ctx: Context): Promise<void> {
   const { getJobStats } = await import("../../repositories/jobs");
   const { escapeHtml } = await import("./formatting");
+  const { getCandidateNameParts } = await import(
+    "../candidate-profile"
+  );
   const stats = await getJobStats();
 
   const ready = stats.ready || 0;
   const applied = stats.applied || 0;
   const discovered = stats.discovered || 0;
 
-  const name = ctx.from?.first_name || "";
+  // Identity comes from the uploaded resume (the single source of truth), NOT
+  // ctx.from.first_name — see CLAUDE.md "Candidate Identity". Falls back to no
+  // greeting if the resume has no name yet.
+  let name = "";
+  try {
+    name = (await getCandidateNameParts()).firstName ?? "";
+  } catch {
+    name = "";
+  }
   const greeting = name ? ` ${escapeHtml(name)}` : "";
 
   const text =

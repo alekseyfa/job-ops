@@ -18,7 +18,7 @@ import {
 } from "@infra/http";
 import { logger } from "@infra/logger";
 import { runWithRequestContext } from "@infra/request-context";
-import { sanitizeUnknown } from "@infra/sanitize";
+import { redactSensitivePath, sanitizeUnknown } from "@infra/sanitize";
 import { verifyToken } from "@server/auth/jwt";
 import * as usersRepo from "@server/repositories/users";
 import { proxyChallengeViewerRequest } from "@server/services/challenge-viewer";
@@ -271,7 +271,16 @@ export function createAuthGuard() {
 export function createApp() {
   const app = express();
   const authGuard = createAuthGuard();
-  const corsMiddleware = cors();
+  // Auth is a Bearer token in a header (not a cookie), so a permissive CORS
+  // origin is not CSRF-exploitable and stays the default. Deployments that want
+  // to lock the browser origin down can set CORS_ALLOWED_ORIGINS to a
+  // comma-separated allowlist.
+  const corsAllowlist = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const corsMiddleware =
+    corsAllowlist.length > 0 ? cors({ origin: corsAllowlist }) : cors();
 
   const handleTracerRedirect = async (
     req: express.Request,
@@ -338,7 +347,7 @@ export function createApp() {
       const duration = Date.now() - start;
       logger.info("HTTP request completed", {
         method: req.method,
-        path: req.path,
+        path: redactSensitivePath(req.path),
         status: res.statusCode,
         durationMs: duration,
       });

@@ -61,7 +61,9 @@ export async function getEnvSettingsData(
   const basicAuthActive = Boolean(basicAuthUser && basicAuthPassword);
 
   values.basicAuthActive = basicAuthActive;
-  values.basicAuthPassword = basicAuthActive ? basicAuthPassword : null;
+  // SECURITY: never return the plaintext basic-auth password to clients. It is
+  // registered kind:"secret", so the loop above already exposed only a short
+  // `basicAuthPasswordHint`. Do NOT re-add `values.basicAuthPassword` here.
 
   return values;
 }

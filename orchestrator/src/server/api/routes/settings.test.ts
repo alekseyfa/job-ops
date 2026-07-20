@@ -266,7 +266,11 @@ describe.sequential("Settings API routes", () => {
     expect(patchBody.data.rxresumeUrl).toBe("https://resume.example.com");
     expect(patchBody.data.llmApiKeyHint).toBe("upda");
     expect(patchBody.data.basicAuthUser).toBe("admin");
-    expect(patchBody.data.basicAuthPassword).toBe("letmein");
+    // SECURITY: the plaintext password must never be echoed back to the client;
+    // only a short hint is exposed (like every other kind:"secret" setting).
+    expect(patchBody.data.basicAuthPassword ?? null).toBeNull();
+    expect(patchBody.data.basicAuthPasswordHint).toBe("letm");
+    expect(patchBody.data.basicAuthActive).toBe(true);
     expect(patchBody.data.ghostwriterSystemPromptTemplate.override).toBe(
       "Custom Ghostwriter {{tone}}",
     );

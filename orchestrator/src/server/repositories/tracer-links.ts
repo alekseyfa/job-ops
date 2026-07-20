@@ -1,11 +1,14 @@
+import { randomInt } from "node:crypto";
 import { createId } from "@paralleldrive/cuid2";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { db, schema } from "../db";
 import { getActiveTenantId } from "../tenancy/context";
 
 const { jobs, tracerClickEvents, tracerLinks } = schema;
-const TRACE_CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz";
-const TRACE_CODE_LENGTH = 2;
+// Crockford-ish base32 without ambiguous chars (no i/l/o/0/1). 8 chars over a
+// 27-symbol alphabet ≈ 38 bits — non-enumerable, unlike the old 26² space.
+const TRACE_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+const TRACE_CODE_LENGTH = 8;
 const MAX_TOKEN_GENERATION_ATTEMPTS = 800;
 
 type AnalyticsFilterArgs = {
@@ -58,11 +61,13 @@ function normalizeSlugPrefix(value: string): string {
 }
 
 function randomTraceCode(): string {
-  const first =
-    TRACE_CODE_ALPHABET[Math.floor(Math.random() * TRACE_CODE_ALPHABET.length)];
-  const second =
-    TRACE_CODE_ALPHABET[Math.floor(Math.random() * TRACE_CODE_ALPHABET.length)];
-  return `${first}${second}`.slice(0, TRACE_CODE_LENGTH);
+  // crypto.randomInt (CSPRNG) — the token is public in /cv/<slug>-<code> URLs,
+  // so it must not be guessable/enumerable.
+  let code = "";
+  for (let i = 0; i < TRACE_CODE_LENGTH; i++) {
+    code += TRACE_CODE_ALPHABET[randomInt(TRACE_CODE_ALPHABET.length)];
+  }
+  return code;
 }
 
 function isUniqueConstraintError(error: unknown): boolean {

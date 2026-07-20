@@ -12,6 +12,16 @@ export function redactString(value: string, max = DEFAULT_MAX_STRING): string {
   return `${value.slice(0, max)}…(truncated ${value.length - max} chars)`;
 }
 
+// Replayable opaque tokens live in URL paths (tracer links `/cv/<token>`,
+// challenge-viewer sessions `/challenge-viewer/session/<token>/…`). Redact those
+// segments before logging so log access can't be used to replay a live session
+// within its TTL. Key-name redaction can't catch these — the token IS the path.
+export function redactSensitivePath(path: string): string {
+  return path
+    .replace(/^(\/cv\/)[^/]+/, "$1[REDACTED]")
+    .replace(/^(\/challenge-viewer\/session\/)[^/]+/, "$1[REDACTED]");
+}
+
 export function sanitizeUnknown(
   value: unknown,
   options: { depth?: number; maxItems?: number; maxString?: number } = {},

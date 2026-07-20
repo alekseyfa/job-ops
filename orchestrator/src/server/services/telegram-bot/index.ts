@@ -51,6 +51,25 @@ export async function initializeTelegramBot(): Promise<void> {
     registerMaintenanceHandlers(bot);
     registerSmartApplyHandlers(bot);
 
+    // Populate Telegram's native "/" command autocomplete / Menu button.
+    // Best-effort: a failure here must not block the bot from starting.
+    bot.api
+      .setMyCommands([
+        { command: "menu", description: "Main menu" },
+        { command: "search", description: "Find jobs by keyword" },
+        { command: "insights", description: "Application funnel & trends" },
+        { command: "interview", description: "Interview prep" },
+        { command: "sync", description: "Sync application emails now" },
+        { command: "gmail", description: "Email sync status" },
+        { command: "changelog", description: "What's new" },
+        { command: "help", description: "How to use this bot" },
+      ])
+      .catch((err) =>
+        logger.warn("Failed to set Telegram command menu", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+
     // Start long-polling
     bot.start({
       onStart: () => {

@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { logger } from "@infra/logger";
-import { sanitizeUnknown } from "@infra/sanitize";
+import { redactSensitivePath, sanitizeUnknown } from "@infra/sanitize";
 import type { Request, Response } from "express";
 
 type ViewerStatus = { available: true } | { available: false; reason: string };
@@ -311,7 +311,7 @@ export async function proxyChallengeViewerRequest(
     res.end();
   } catch (error) {
     logger.warn("Challenge viewer proxy request failed", {
-      path: req.path,
+      path: redactSensitivePath(req.path),
       error: sanitizeUnknown(error),
     });
     res.status(502).type("text/plain; charset=utf-8").send("Upstream error");

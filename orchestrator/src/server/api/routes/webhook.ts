@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { toAppError, unauthorized } from "@infra/errors";
 import { fail, ok, okWithMeta } from "@infra/http";
 import { logger } from "@infra/logger";
@@ -9,6 +10,19 @@ import { type Request, type Response, Router } from "express";
 
 export const webhookRouter = Router();
 
+/** Constant-time bearer-token check to avoid leaking the secret via timing. */
+function bearerMatches(
+  authHeader: string | undefined,
+  expectedToken: string,
+): boolean {
+  const expected = `Bearer ${expectedToken}`;
+  const provided = authHeader ?? "";
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(provided);
+  if (expectedBuf.length !== providedBuf.length) return false;
+  return timingSafeEqual(expectedBuf, providedBuf);
+}
+
 /**
  * POST /api/webhook/trigger - Webhook endpoint for n8n to trigger the pipeline
  */
@@ -16,7 +30,7 @@ webhookRouter.post("/trigger", async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   const expectedToken = process.env.WEBHOOK_SECRET;
 
-  if (expectedToken && authHeader !== `Bearer ${expectedToken}`) {
+  if (expectedToken && !bearerMatches(authHeader, expectedToken)) {
     return fail(res, unauthorized());
   }
 

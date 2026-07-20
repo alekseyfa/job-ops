@@ -62,7 +62,7 @@ describe.sequential("tracer-links repository", () => {
 
     expect(second.id).toBe(first.id);
     expect(second.token).toBe(first.token);
-    expect(first.token).toMatch(/^sarfaraz-amazon-[a-z]{2}$/);
+    expect(first.token).toMatch(/^sarfaraz-amazon-[a-z2-9]{8}$/);
   });
 
   it("creates a new token when destination changes for same source path", async () => {
