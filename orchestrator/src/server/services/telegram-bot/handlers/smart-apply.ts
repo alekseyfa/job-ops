@@ -317,7 +317,24 @@ async function startAndPoll(
     ) {
       clearInterval(intervalHandle);
     } else if (Date.now() > deadline) {
+      // Don't leave the card frozen on "Preparing…" — tell the user it's still
+      // working and give them a manual Refresh (the session keeps running).
       clearInterval(intervalHandle);
+      await ctx.api
+        .editMessageText(
+          chatId,
+          finalMessageId,
+          `${next.text}\n\n⏳ <i>Still preparing — this is taking longer than usual. Tap Refresh to check again.</i>`,
+          {
+            parse_mode: "HTML",
+            reply_markup: new InlineKeyboard()
+              .text("🔄 Refresh", `sa:status:${result.session.id}`)
+              .row()
+              .text("⏹ Abort", `sa:abort:${result.session.id}`),
+            link_preview_options: { is_disabled: true },
+          },
+        )
+        .catch(() => {});
     }
   }, POLL_INTERVAL_MS);
 }
@@ -379,7 +396,12 @@ async function renderDraftModal(
     }
     const draftAnswer = draft.answer;
 
-    const draftText = `<b>Essay Question</b>\n${questionText}${hintText}\n\n<b>AI Draft</b>${draft.fromCache ? " (reused from past application)" : ""}:\n${escapeHtml(draftAnswer)}\n\n<i>Edit below or tap 'Use As-Is' to save.</i>`;
+    // Persist the EXACT drafted text now, so "Use As-Is" saves what the user
+    // sees instead of re-calling the LLM (which could return different text and
+    // burns a second call). sa:save then just confirms this stored draft.
+    await updateSessionEssayAnswer(sessionId, field.selector, draftAnswer);
+
+    const draftText = `<b>Essay Question</b>\n${questionText}${hintText}\n\n<b>AI Draft</b>${draft.fromCache ? " (reused from past application)" : ""}:\n${escapeHtml(draftAnswer)}\n\n<i>Tap 'Use As-Is' to keep this, or edit it later in the viewer.</i>`;
 
     // Encode selector as base64 to avoid Telegram callback_data size issues.
     const selectorB64 = Buffer.from(field.selector).toString("base64");
@@ -469,38 +491,32 @@ export function registerSmartApplyHandlers(bot: Bot): void {
         return;
       }
 
-      // The draft is in the message text that the user is replying to.
-      // For simplicity, we assume the user tapped "Use As-Is", so we need to
-      // extract the answer from the current message. But we don't have it in
-      // the callback context. Instead, we fetch it from the session's field
-      // value if it's been set, or we re-draft.
-      //
-      // Actually, the issue is that the draft is shown in the message but not
-      // yet saved to the session. We need to extract it. For WS3, let's take
-      // a shortcut: re-call draftScreeningAnswer (it will hit the cache) and
-      // use that answer.
-      const job = await jobsRepo.getJobById(session.jobId);
-      if (!job) {
-        await ctx
-          .answerCallbackQuery("Job not found.")
-          .catch(() => {});
+      // renderDraftModal already persisted the exact drafted text via
+      // updateSessionEssayAnswer, so "Use As-Is" just confirms it — no re-draft,
+      // no second LLM call, and the saved answer is EXACTLY what the user saw.
+      if (field.draftedAnswer) {
+        await updateSessionEssayAnswer(sessionId, selector, field.draftedAnswer);
+        await ctx.answerCallbackQuery("Saved!").catch(() => {});
+        await renderDraftModal(ctx, sessionId);
         return;
       }
 
+      // Fallback (draft not persisted for some reason): draft once and save.
+      const job = await jobsRepo.getJobById(session.jobId);
+      if (!job) {
+        await ctx.answerCallbackQuery("Job not found.").catch(() => {});
+        return;
+      }
       const draft = await draftScreeningAnswer({
         question: field.label,
         hint: field.hint,
         job,
       });
-
       if (!draft.success || !draft.answer) {
         throw new Error(draft.error ?? "Draft failed");
       }
-
       await updateSessionEssayAnswer(sessionId, selector, draft.answer);
       await ctx.answerCallbackQuery("Saved!").catch(() => {});
-
-      // Loop to next pending essay or return to status card.
       await renderDraftModal(ctx, sessionId);
     } catch (err) {
       logger.error("Smart Apply: save essay failed", { error: err });
