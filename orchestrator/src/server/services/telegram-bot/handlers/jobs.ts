@@ -12,6 +12,7 @@ import { isSmartApplyEligible } from "../../smart-apply";
 import { generateCoverLetterPdf } from "../../cover-letter-pdf";
 import { generateReferralMessage } from "../../referral-message";
 import { formatJobCard, formatJobListItem, escapeHtml } from "../formatting";
+import { awaitingInput } from "../awaiting-input";
 
 const PAGE_SIZE = 5;
 
@@ -40,6 +41,128 @@ async function buildAttachmentFilename(
   if (safeName) return `${safeName}_${suffix}.pdf`;
   if (suffix === "CoverLetter") return "CoverLetter.pdf";
   return undefined;
+}
+
+/**
+ * Build the detail-card text + keyboard for a job. Shared by the job-detail
+ * handler and the rapid-triage loop so a triaged action can render the NEXT
+ * job's card in place instead of a dead-end confirmation.
+ */
+function buildJobDetailView(
+  job: NonNullable<Awaited<ReturnType<typeof jobsRepo.getJobById>>>,
+): { text: string; keyboard: InlineKeyboard } {
+  const text = formatJobCard(job);
+  const sid = job.id.slice(0, 8);
+  const jobUrl = job.applicationLink || job.jobUrl;
+  const keyboard = new InlineKeyboard();
+
+  if (job.status === "ready") {
+    keyboard.text("✅ Mark Applied", `j:apply:${sid}`);
+    keyboard.text("⏭ Skip", `j:skip:${sid}`);
+    keyboard.row();
+    keyboard.text("🚫 Block Company", `j:block:${sid}`);
+    keyboard.row();
+  }
+
+  if (job.status === "discovered") {
+    keyboard.text("🚫 Block Company", `j:block:${sid}`);
+    keyboard.row();
+  }
+
+  if (job.status === "applied") {
+    keyboard.text("🔄 Mark In Progress", `j:inprog:${sid}`);
+    keyboard.row();
+  }
+
+  if (
+    job.status === "applied" ||
+    job.status === "in_progress" ||
+    job.status === "skipped"
+  ) {
+    keyboard.text("🗑 Delete Job", `j:del:${sid}`);
+    keyboard.row();
+  }
+
+  if (job.pdfPath) {
+    keyboard.text("📄 Download PDF", `j:pdf:${sid}`);
+  }
+
+  if (
+    job.status === "ready" ||
+    job.status === "applied" ||
+    job.status === "in_progress"
+  ) {
+    keyboard.row();
+    keyboard.text("📝 Cover Letter", `j:cl:${sid}`);
+    keyboard.text("🤝 Ask for Referral", `j:rr:${sid}`);
+  }
+
+  if (job.status === "ready" && isSmartApplyEligible({ job })) {
+    keyboard.row();
+    keyboard.text("🚀 Smart Apply", `sa:start:${sid}`);
+  }
+
+  if (jobUrl) {
+    keyboard.url("🔗 Open Listing", jobUrl);
+  }
+
+  keyboard
+    .row()
+    .text("📋 Jobs", `j:${job.status}:0`)
+    .text("📊 Stats", "s:stats")
+    .text("⚙️ Settings", "x:menu");
+  keyboard.row().text("◀️ Menu", "m:menu");
+
+  return { text, keyboard };
+}
+
+/**
+ * After triaging a ready job (apply/skip/block), advance to the next ready job
+ * so the user can clear the queue one tap at a time. Falls back to a "queue
+ * cleared" card when nothing is left. `note` prefixes the action just taken.
+ */
+async function advanceToNextReadyJob(
+  ctx: CallbackQueryContext<Context>,
+  note: string,
+): Promise<void> {
+  const readyJobs = await jobsRepo.getJobListItems(["ready"]);
+  readyJobs.sort(
+    (a, b) => (b.suitabilityScore ?? -1) - (a.suitabilityScore ?? -1),
+  );
+
+  const next = readyJobs[0];
+  if (!next) {
+    await ctx.editMessageText(
+      `${note}\n\n🎉 <b>Ready queue cleared!</b>\nNo more jobs to triage right now.`,
+      {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard()
+          .text("📨 Applied", "j:applied:0")
+          .text("🔍 Discovered", "j:discovered:0")
+          .row()
+          .text("◀️ Menu", "m:menu"),
+      },
+    );
+    return;
+  }
+
+  const full = await jobsRepo.getJobById(next.id);
+  if (!full) {
+    await ctx.editMessageText(`${note}`, {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard()
+        .text("📋 Ready", "j:ready:0")
+        .text("◀️ Menu", "m:menu"),
+    });
+    return;
+  }
+
+  const remaining = readyJobs.length;
+  const { text, keyboard } = buildJobDetailView(full);
+  await ctx.editMessageText(
+    `${note}\n\n<b>⏭ Next up</b> · ${remaining} ready left\n\n${text}`,
+    { parse_mode: "HTML", reply_markup: keyboard },
+  );
 }
 
 export function registerJobHandlers(bot: Bot): void {
@@ -97,11 +220,15 @@ export function registerJobHandlers(bot: Bot): void {
     keyboard.text(`${safePage + 1}/${totalPages}`, "noop");
     if (safePage < totalPages - 1) keyboard.text("▶️", `j:${status}:${safePage + 1}`);
 
-    // Tab navigation
+    // Tab navigation — row 1: workflow queues, row 2: discovery + search.
     keyboard.row();
     if (status !== "ready") keyboard.text("✅ Ready", "j:ready:0");
     if (status !== "applied") keyboard.text("📨 Applied", "j:applied:0");
     if (status !== "in_progress") keyboard.text("🔄 In Progress", "j:in_progress:0");
+    keyboard.row();
+    if (status !== "discovered") keyboard.text("🔍 Discovered", "j:discovered:0");
+    if (status !== "all") keyboard.text("🗂 All", "j:all:0");
+    keyboard.text("🔎 Search", "j:search");
 
     keyboard.row().text("◀️ Menu", "m:menu");
 
@@ -114,6 +241,58 @@ export function registerJobHandlers(bot: Bot): void {
   // No-op callback for page indicator and disabled buttons
   bot.callbackQuery("noop", async (ctx) => {
     await ctx.answerCallbackQuery();
+  });
+
+  // Search button — prime awaiting-input for the next text message.
+  bot.callbackQuery("j:search", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const chatId = ctx.chat?.id;
+    if (chatId) awaitingInput.set(chatId, "jobs:search");
+    await ctx.editMessageText(
+      "🔎 <b>Search jobs</b>\n\nSend a keyword to search across title, company, and location.\n<i>Examples: Berlin, Senior PM, BMW</i>",
+      {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard().text("◀️ Back", "j:ready:0"),
+      },
+    );
+  });
+
+  // Capture the search query typed after tapping the Search button.
+  bot.on("message:text", async (ctx, next) => {
+    const chatId = ctx.chat?.id;
+    if (!chatId || awaitingInput.get(chatId) !== "jobs:search") {
+      return next();
+    }
+    awaitingInput.delete(chatId);
+
+    const query = ctx.message.text.trim();
+    if (query.length < 2) {
+      await ctx.reply("🔎 Query too short. Use at least 2 characters.");
+      return;
+    }
+
+    const results = await jobsRepo.searchJobs(query, 20);
+    if (results.length === 0) {
+      await ctx.reply(`🔎 No jobs match <b>${escapeHtml(query)}</b>.`, {
+        parse_mode: "HTML",
+        reply_markup: new InlineKeyboard().text("◀️ Menu", "m:menu"),
+      });
+      return;
+    }
+
+    const text =
+      `<b>🔎 Search: ${escapeHtml(query)} (${results.length})</b>\n\n` +
+      results.map((j, i) => formatJobListItem(j, i)).join("\n\n");
+    const keyboard = new InlineKeyboard();
+    for (const j of results.slice(0, 10)) {
+      const shortId = j.id.slice(0, 8);
+      const score = j.suitabilityScore !== null ? `⭐${j.suitabilityScore}` : "";
+      const company = truncateCodePoints(j.employer, 15);
+      const title = truncateCodePoints(j.title, 22);
+      keyboard.text(`${score} ${title} · ${company}`, `j:d:${shortId}`).row();
+    }
+    keyboard.text("◀️ Menu", "m:menu");
+    await ctx.reply(text, { parse_mode: "HTML", reply_markup: keyboard });
   });
 
   // Job detail: j:d:abc12345
@@ -133,69 +312,7 @@ export function registerJobHandlers(bot: Bot): void {
       return;
     }
 
-    const text = formatJobCard(job);
-    const sid = job.id.slice(0, 8);
-    const jobUrl = job.applicationLink || job.jobUrl;
-
-    const keyboard = new InlineKeyboard();
-
-    if (job.status === "ready") {
-      keyboard.text("✅ Mark Applied", `j:apply:${sid}`);
-      keyboard.text("⏭ Skip", `j:skip:${sid}`);
-      keyboard.row();
-      keyboard.text("🚫 Block Company", `j:block:${sid}`);
-      keyboard.row();
-    }
-
-    if (job.status === "discovered") {
-      keyboard.text("🚫 Block Company", `j:block:${sid}`);
-      keyboard.row();
-    }
-
-    if (job.status === "applied") {
-      keyboard.text("🔄 Mark In Progress", `j:inprog:${sid}`);
-      keyboard.row();
-    }
-
-    if (
-      job.status === "applied" ||
-      job.status === "in_progress" ||
-      job.status === "skipped"
-    ) {
-      keyboard.text("🗑 Delete Job", `j:del:${sid}`);
-      keyboard.row();
-    }
-
-    if (job.pdfPath) {
-      keyboard.text("📄 Download PDF", `j:pdf:${sid}`);
-    }
-
-    if (
-      job.status === "ready" ||
-      job.status === "applied" ||
-      job.status === "in_progress"
-    ) {
-      keyboard.row();
-      keyboard.text("📝 Cover Letter", `j:cl:${sid}`);
-      keyboard.text("🤝 Ask for Referral", `j:rr:${sid}`);
-    }
-
-    // Smart Apply — only on ready jobs from supported ATS (Greenhouse/Ashby).
-    if (job.status === "ready" && isSmartApplyEligible({ job })) {
-      keyboard.row();
-      keyboard.text("🚀 Smart Apply", `sa:start:${sid}`);
-    }
-
-    if (jobUrl) {
-      keyboard.url("🔗 Open Listing", jobUrl);
-    }
-
-    keyboard.row()
-      .text("📋 Jobs", `j:${job.status}:0`)
-      .text("📊 Stats", "s:stats")
-      .text("⚙️ Settings", "x:menu");
-    keyboard.row().text("◀️ Menu", "m:menu");
-
+    const { text, keyboard } = buildJobDetailView(job);
     await ctx.editMessageText(text, {
       parse_mode: "HTML",
       reply_markup: keyboard,
@@ -221,10 +338,11 @@ export function registerJobHandlers(bot: Bot): void {
       appliedAt: new Date().toISOString(),
     });
     await ctx.answerCallbackQuery("✅ Marked as applied!");
-    await ctx.editMessageText(`✅ <b>${escapeHtml(match.title)}</b> marked as applied!`, {
-      parse_mode: "HTML",
-      reply_markup: new InlineKeyboard().text("◀️ Back", "j:ready:0").text("◀️ Menu", "m:menu"),
-    });
+    // Rapid triage: advance straight to the next ready job.
+    await advanceToNextReadyJob(
+      ctx,
+      `✅ <b>${escapeHtml(match.title)}</b> marked as applied!`,
+    );
   });
 
   // Mark in progress
@@ -265,10 +383,8 @@ export function registerJobHandlers(bot: Bot): void {
 
     await jobsRepo.updateJob(match.id, { status: "skipped" });
     await ctx.answerCallbackQuery("⏭ Skipped!");
-    await ctx.editMessageText(`⏭ <b>${escapeHtml(match.title)}</b> skipped.`, {
-      parse_mode: "HTML",
-      reply_markup: new InlineKeyboard().text("◀️ Back", "j:ready:0").text("◀️ Menu", "m:menu"),
-    });
+    // Rapid triage: advance straight to the next ready job.
+    await advanceToNextReadyJob(ctx, `⏭ <b>${escapeHtml(match.title)}</b> skipped.`);
   });
 
   // Block company — confirm step (destructive: adds to blocklist + skips job)
@@ -337,18 +453,24 @@ export function registerJobHandlers(bot: Bot): void {
     }
 
     // Skip the job
+    const wasReady = match.status === "ready";
     if (match.status === "ready" || match.status === "discovered") {
       await jobsRepo.updateJob(match.id, { status: "skipped" });
     }
 
     await ctx.answerCallbackQuery(`🚫 ${match.employer} blocked!`);
-    await ctx.editMessageText(
-      `🚫 <b>${escapeHtml(match.employer)}</b> blocked.\nFuture jobs from this company will be filtered out.`,
-      {
-        parse_mode: "HTML",
-        reply_markup: new InlineKeyboard().text("◀️ Back", `j:ready:0`).text("◀️ Menu", "m:menu"),
-      },
-    );
+    const note = `🚫 <b>${escapeHtml(match.employer)}</b> blocked.\nFuture jobs from this company will be filtered out.`;
+    // If we blocked from the ready-triage flow, advance to the next ready job.
+    if (wasReady) {
+      await advanceToNextReadyJob(ctx, note);
+      return;
+    }
+    await ctx.editMessageText(note, {
+      parse_mode: "HTML",
+      reply_markup: new InlineKeyboard()
+        .text("🔍 Discovered", "j:discovered:0")
+        .text("◀️ Menu", "m:menu"),
+    });
   });
 
   // Download PDF — with user's name in filename
