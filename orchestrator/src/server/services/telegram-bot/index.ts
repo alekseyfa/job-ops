@@ -1,4 +1,6 @@
 import { logger } from "@infra/logger";
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "../../tenancy/constants";
 import * as settingsRepo from "../../repositories/settings";
 import { generateLinkCode } from "./auth";
 import { createBot, getBot } from "./bot";
@@ -27,9 +29,15 @@ export { generateLinkCode } from "./auth";
 let started = false;
 
 export async function initializeTelegramBot(): Promise<void> {
+  // The bot token is a global (tenant-agnostic) setting read at startup, before
+  // any request context exists. Fail-closed tenancy requires an explicit tenant,
+  // so scope the read to the default tenant. ponytail: this exists.
   const token =
-    (await settingsRepo.getSetting("telegramBotToken"))?.trim() ||
-    process.env.TELEGRAM_BOT_TOKEN?.trim();
+    (
+      await runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, () =>
+        settingsRepo.getSetting("telegramBotToken"),
+      )
+    )?.trim() || process.env.TELEGRAM_BOT_TOKEN?.trim();
 
   if (!token) {
     logger.info("Telegram bot disabled (no TELEGRAM_BOT_TOKEN)");
