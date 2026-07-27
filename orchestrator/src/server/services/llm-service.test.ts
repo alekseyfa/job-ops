@@ -308,6 +308,31 @@ describe("LlmService", () => {
     const headers = fetchCall?.[1]?.headers as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
   });
+
+  it("validates Bedrock via the invoke endpoint with a bearer token", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ content: [{ type: "text", text: "OK" }] }),
+    } as Response);
+
+    const llm = new LlmService({
+      provider: "bedrock",
+      baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      apiKey: "bedrock-bearer-token",
+    });
+    const result = await llm.validateCredentials();
+
+    expect(result.valid).toBe(true);
+    const [url, init] = vi.mocked(global.fetch).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toContain("bedrock-runtime.us-east-1.amazonaws.com");
+    expect(url).toContain("/invoke");
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer bedrock-bearer-token");
+  });
 });
 
 describe("parseJsonContent", () => {

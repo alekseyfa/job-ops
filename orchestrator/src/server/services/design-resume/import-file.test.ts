@@ -546,6 +546,74 @@ describe("importDesignResumeFromFile", () => {
     expect(String(body)).not.toContain(spacedBase64.trim());
   });
 
+  it("routes a Bedrock resume import to the invoke URL with bearer auth and parses the Anthropic-shaped response", async () => {
+    // This is the exact CLAUDE_CODE_USE_BEDROCK config resolveLlmRuntimeSettings
+    // now returns; before the fix it fell back to DB anthropic settings and 403'd.
+    modelSelection.resolveLlmRuntimeSettings.mockResolvedValueOnce({
+      provider: "bedrock",
+      model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      baseUrl: "https://bedrock-runtime.eu-west-1.amazonaws.com",
+      apiKey: "bedrock-bearer-token",
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          content: [
+            { type: "text", text: `{"basics":{"name":"Taylor Quinn"}}` },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await importDesignResumeFromFile({
+      fileName: "resume.pdf",
+      mediaType: "application/pdf",
+      dataBase64: Buffer.from("pdf-data").toString("base64"),
+    });
+
+    expect(result.title).toBe("Taylor Resume");
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    // Model id (with its `:`) lives in the encoded URL path, not the body.
+    expect(url).toBe(
+      "https://bedrock-runtime.eu-west-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/invoke",
+    );
+    const headers = init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer bedrock-bearer-token");
+    expect(headers["x-api-key"]).toBeUndefined();
+    const body = JSON.parse(init?.body as string);
+    expect(body.anthropic_version).toBe("bedrock-2023-05-31");
+    expect(body.model).toBeUndefined();
+  });
+
+  it("surfaces a Bedrock 403 as an upstream error instead of saving", async () => {
+    modelSelection.resolveLlmRuntimeSettings.mockResolvedValueOnce({
+      provider: "bedrock",
+      model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      baseUrl: "https://bedrock-runtime.us-east-2.amazonaws.com",
+      apiKey: "bedrock-bearer-token",
+    });
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ message: "Forbidden" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    // Same mapping as every other provider: a provider HTTP error resolves to
+    // 502 (the intermediate 503 is >= 500 and re-wrapped via upstreamError).
+    await expect(
+      importDesignResumeFromFile({
+        fileName: "resume.pdf",
+        mediaType: "application/pdf",
+        dataBase64: Buffer.from("pdf-data").toString("base64"),
+      }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(
+      designResumeService.replaceCurrentDesignResumeDocument,
+    ).not.toHaveBeenCalled();
+  });
+
   it("returns a capability error when the configured provider does not support direct file import", async () => {
     modelSelection.resolveLlmRuntimeSettings.mockResolvedValueOnce({
       provider: "ollama",

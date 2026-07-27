@@ -4,6 +4,10 @@ import { isDemoMode } from "@server/config/demo";
 import { getSetting } from "@server/repositories/settings";
 import { getDesignResumeStatus } from "@server/services/design-resume";
 import { getOriginalEnvValue } from "@server/services/envSettings";
+import {
+  isBedrockEnabled,
+  resolveBedrockBaseUrl,
+} from "@server/services/llm/providers/bedrock";
 import { LlmService } from "@server/services/llm/service";
 import { suggestOnboardingSearchTerms } from "@server/services/onboarding-search-terms";
 import {
@@ -37,6 +41,17 @@ async function validateLlm(options: {
   provider?: string | null;
   baseUrl?: string | null;
 }): Promise<ValidationResponse> {
+  // CLAUDE_CODE_USE_BEDROCK short-circuits provider/model settings at runtime
+  // (see createConfiguredLlmService); validation must test the same endpoint,
+  // otherwise "login" checks an unused provider key and reports a false failure.
+  if (isBedrockEnabled()) {
+    return new LlmService({
+      provider: "bedrock",
+      baseUrl: resolveBedrockBaseUrl(),
+      apiKey: getOriginalEnvValue("AWS_BEARER_TOKEN_BEDROCK") ?? null,
+    }).validateCredentials();
+  }
+
   const [storedApiKey, storedProvider, storedBaseUrl] = await Promise.all([
     getSetting("llmApiKey"),
     getSetting("llmProvider"),

@@ -24,7 +24,12 @@ type SupportedImportMediaType =
   | "application/pdf"
   | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
-type SupportedRuntimeProvider = "openai" | "openrouter" | "gemini" | "anthropic";
+type SupportedRuntimeProvider =
+  | "openai"
+  | "openrouter"
+  | "gemini"
+  | "anthropic"
+  | "bedrock";
 
 type ResumeImportFileInput = {
   fileName: string;
@@ -91,6 +96,7 @@ function normalizeRuntimeProvider(
   }
   if (normalized === "gemini") return "gemini";
   if (normalized === "anthropic") return "anthropic";
+  if (normalized === "bedrock") return "bedrock";
   return null;
 }
 
@@ -1144,6 +1150,78 @@ async function extractWithAnthropic(args: {
   return text;
 }
 
+// Bedrock's InvokeModel is the Anthropic Messages format with three twists:
+// model in the URL path, anthropic_version pinned in the body, bearer auth.
+// Kept in sync with providers/bedrock.ts (BEDROCK_ANTHROPIC_VERSION).
+const BEDROCK_ANTHROPIC_VERSION = "bedrock-2023-05-31";
+
+async function extractWithBedrock(args: {
+  apiKey: string;
+  baseUrl: string | null;
+  model: string;
+  mediaType: SupportedImportMediaType;
+  fileName: string;
+  dataBase64: string;
+  documentText?: string | null;
+  requestId: string | undefined;
+}): Promise<string> {
+  const baseUrl = args.baseUrl || "https://bedrock-runtime.us-east-1.amazonaws.com";
+  // Model id (e.g. us.anthropic.claude-...) goes in the path; encode so the
+  // `:` in on-demand ARNs doesn't break the URL.
+  const url = joinUrl(baseUrl, `/model/${encodeURIComponent(args.model)}/invoke`);
+
+  const userContent = args.documentText
+    ? [{ type: "text", text: buildDocxPrompt(args.documentText, args.fileName) }]
+    : [
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: args.mediaType,
+            data: args.dataBase64,
+          },
+        },
+        { type: "text", text: buildUserPrompt() },
+      ];
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${args.apiKey}`,
+    },
+    body: JSON.stringify({
+      anthropic_version: BEDROCK_ANTHROPIC_VERSION,
+      max_tokens: 8192,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userContent }],
+    }),
+    signal: AbortSignal.timeout(ANTHROPIC_DEFAULT_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const detail = parseErrorMessage(await getResponseDetail(response));
+    throw new AppError({
+      status: response.status >= 500 ? 502 : 503,
+      message: detail || `Bedrock returned ${response.status}.`,
+      details: {
+        provider: "bedrock",
+        model: args.model,
+        requestId: args.requestId ?? null,
+      },
+    });
+  }
+
+  const payload = await response.json();
+  const text = extractAnthropicText(payload);
+  if (!text) {
+    throw upstreamError(
+      "Bedrock returned an empty response for resume import.",
+    );
+  }
+  return text;
+}
+
 async function extractResumeFromProvider(args: {
   provider: SupportedRuntimeProvider;
   apiKey: string;
@@ -1163,6 +1241,9 @@ async function extractResumeFromProvider(args: {
   }
   if (args.provider === "anthropic") {
     return extractWithAnthropic(args);
+  }
+  if (args.provider === "bedrock") {
+    return extractWithBedrock(args);
   }
   return extractWithGemini(args);
 }

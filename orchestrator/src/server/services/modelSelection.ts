@@ -76,6 +76,20 @@ export async function resolveLlmRuntimeSettings(
   baseUrl: string | null;
   apiKey: string | null;
 }> {
+  // Same env short-circuit as resolveLlmModel/createConfiguredLlmService: under
+  // Bedrock, callers that build their own request from these fields (CV import,
+  // ghostwriter chat) must get the Bedrock endpoint + bearer token, not the
+  // stale DB anthropic settings — which otherwise POST the bearer token to
+  // api.anthropic.com and 403.
+  if (isBedrockEnabled()) {
+    return {
+      model: resolveBedrockModel(),
+      provider: "bedrock",
+      baseUrl: resolveBedrockBaseUrl(),
+      apiKey: getOriginalEnvValue("AWS_BEARER_TOKEN_BEDROCK") ?? null,
+    };
+  }
+
   const getAllSettings =
     "getAllSettings" in settingsRepo ? settingsRepo.getAllSettings : null;
   const [settings, overrides] = await Promise.all([

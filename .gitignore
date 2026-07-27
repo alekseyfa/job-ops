@@ -4,6 +4,7 @@
 
 # Custom CA bundle for TLS-intercepting proxies (NODE_EXTRA_CA_CERTS)
 *-ca-certs.pem
+ca-certs.pem
 
 # Dependencies
 node_modules/

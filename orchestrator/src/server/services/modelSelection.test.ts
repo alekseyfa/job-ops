@@ -254,6 +254,21 @@ describe("Model Selection Logic", () => {
       });
     });
 
+    it("resolveLlmRuntimeSettings returns the Bedrock endpoint + bearer token, not DB settings", async () => {
+      // Regression: CV import / ghostwriter build their own request from these
+      // fields. Before the fix this ignored Bedrock and returned stale DB
+      // anthropic settings, POSTing the bearer token to api.anthropic.com → 403.
+      const { resolveLlmRuntimeSettings } = await import("./modelSelection");
+      const runtime = await resolveLlmRuntimeSettings();
+
+      expect(runtime).toEqual({
+        provider: "bedrock",
+        model: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        baseUrl: "https://bedrock-runtime.eu-west-1.amazonaws.com",
+        apiKey: "bedrock-bearer-token",
+      });
+    });
+
     it("routes scoring through the Bedrock endpoint and parses the result", async () => {
       const result = await scoreJobSuitability(
         { id: "job-1", title: "Test Job", jobDescription: "desc" } as any,

@@ -2,6 +2,7 @@ import { logger } from "@infra/logger";
 import { getOriginalEnvValue } from "@server/services/envSettings";
 import { toStringOrNull } from "@shared/utils/type-conversion";
 import { CodexClient } from "./codex/client";
+import { resolveBedrockModel } from "./providers/bedrock";
 import {
   buildModeCacheKey,
   getOrderedModes,
@@ -144,8 +145,10 @@ export class LlmService {
       return { valid: false, message: "LLM API key is missing." };
     }
 
-    if (this.provider === "anthropic") {
-      return this.validateAnthropicCredentials();
+    // Anthropic and Bedrock share the Messages format and have no cheap GET
+    // validation endpoint, so both validate via a tiny live request.
+    if (this.provider === "anthropic" || this.provider === "bedrock") {
+      return this.validateMessagesCredentials();
     }
 
     const urls = this.strategy.getValidationUrls({
@@ -200,13 +203,19 @@ export class LlmService {
     };
   }
 
-  private async validateAnthropicCredentials(): Promise<LlmValidationResult> {
+  private async validateMessagesCredentials(): Promise<LlmValidationResult> {
+    // Bedrock carries the model in the URL path, so it must be a real Bedrock
+    // model id; plain Anthropic just needs any valid model to reach auth.
+    const model =
+      this.provider === "bedrock" ? resolveBedrockModel() : "claude-haiku-4-5";
+    const label = this.provider === "bedrock" ? "Bedrock" : "Anthropic";
+
     try {
       const { url, headers, body } = this.strategy.buildRequest({
         mode: "text",
         baseUrl: this.baseUrl,
         apiKey: this.apiKey,
-        model: "claude-haiku-4-5",
+        model,
         messages: [{ role: "user", content: "Say OK" }],
         jsonSchema: { name: "test", schema: { type: "object", properties: {}, required: [], additionalProperties: false } },
       });
@@ -231,7 +240,7 @@ export class LlmService {
       const detail = await getResponseDetail(response);
       return {
         valid: false,
-        message: detail || `Anthropic returned ${response.status}.`,
+        message: detail || `${label} returned ${response.status}.`,
       };
     } catch (error) {
       return {

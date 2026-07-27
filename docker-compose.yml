@@ -26,6 +26,9 @@ services:
       - ./data:/app/data
       # Persist Codex login/session data for app-server provider
       - codex-home:/app/codex-home
+      # Corporate TLS-intercepting proxy CA bundle. Optional; provide your own
+      # ca-certs.pem (gitignored) when behind such a proxy.
+      - ./ca-certs.pem:/certs/ca-certs.pem:ro
     environment:
       # Server config
       - NODE_ENV=production
@@ -47,6 +50,9 @@ services:
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - HTTP_PROXY=${HTTP_PROXY:-}
       - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1}
+      # Trust the mounted corporate CA bundle so undici fetch can complete the
+      # TLS handshake through the intercepting proxy (fixes "fetch failed").
+      - NODE_EXTRA_CA_CERTS=/certs/ca-certs.pem
 
     env_file:
       - path: ./.env
