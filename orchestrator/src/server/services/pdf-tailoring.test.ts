@@ -1,6 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { generatePdf } from "./pdf";
 import * as projectSelection from "./projectSelection";
+
+// generatePdf -> pdf-storage getTenantPdfDir -> getActiveTenantId is
+// fail-closed on tenancy; production wraps every call in a request context.
+// Unit tests must supply that ambient context or it throws "Tenant context
+// is required". Static import binds the same singleton AsyncLocalStorage the
+// statically-imported service uses (no vi.resetModules here).
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 // Define mock data in hoisted block
 const {
@@ -439,7 +450,9 @@ describe("PDF Service Tailoring Logic", () => {
       skills: [],
     };
 
-    await generatePdf("job-1", tailoredContent, "Job Desc", "base.json", "p2");
+    await asTenant(() =>
+      generatePdf("job-1", tailoredContent, "Job Desc", "base.json", "p2"),
+    );
 
     // 1. pickProjectIdsForJob should NOT be called
     expect(projectSelection.pickProjectIdsForJob).not.toHaveBeenCalled();
@@ -461,7 +474,9 @@ describe("PDF Service Tailoring Logic", () => {
   });
 
   it("should handle comma-separated project IDs correctly", async () => {
-    await generatePdf("job-2", {}, "desc", "base.json", "p1, p2 ");
+    await asTenant(() =>
+      generatePdf("job-2", {}, "desc", "base.json", "p1, p2 "),
+    );
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalled();
     const savedResumeJson = mockResumeRenderer.getLastResumeJson();
@@ -472,7 +487,9 @@ describe("PDF Service Tailoring Logic", () => {
   });
 
   it("keeps projects section visible when selected project list is explicitly empty", async () => {
-    await generatePdf("job-empty-projects", {}, "desc", "base.json", "");
+    await asTenant(() =>
+      generatePdf("job-empty-projects", {}, "desc", "base.json", ""),
+    );
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalled();
     const savedResumeJson = mockResumeRenderer.getLastResumeJson();
@@ -487,7 +504,9 @@ describe("PDF Service Tailoring Logic", () => {
     // Setup AI selection mock for this test
     vi.mocked(projectSelection.pickProjectIdsForJob).mockResolvedValue(["p1"]);
 
-    await generatePdf("job-3", {}, "desc", "base.json", undefined);
+    await asTenant(() =>
+      generatePdf("job-3", {}, "desc", "base.json", undefined),
+    );
 
     expect(projectSelection.pickProjectIdsForJob).toHaveBeenCalled();
 
@@ -511,19 +530,23 @@ describe("PDF Service Tailoring Logic", () => {
   });
 
   it("does not rewrite links when tracer links are disabled", async () => {
-    await generatePdf("job-no-tracer", {}, "desc", undefined, undefined, {
-      tracerLinksEnabled: false,
-    });
+    await asTenant(() =>
+      generatePdf("job-no-tracer", {}, "desc", undefined, undefined, {
+        tracerLinksEnabled: false,
+      }),
+    );
 
     expect(mockTracerLinks.resolveTracerPublicBaseUrl).not.toHaveBeenCalled();
     expect(mockTracerLinks.rewriteResumeLinksWithTracer).not.toHaveBeenCalled();
   });
 
   it("rewrites links when tracer links are enabled", async () => {
-    await generatePdf("job-with-tracer", {}, "desc", undefined, undefined, {
-      tracerLinksEnabled: true,
-      requestOrigin: "https://jobops.example",
-    });
+    await asTenant(() =>
+      generatePdf("job-with-tracer", {}, "desc", undefined, undefined, {
+        tracerLinksEnabled: true,
+        requestOrigin: "https://jobops.example",
+      }),
+    );
 
     expect(mockTracerLinks.resolveTracerPublicBaseUrl).toHaveBeenCalledWith({
       requestOrigin: "https://jobops.example",
@@ -537,7 +560,7 @@ describe("PDF Service Tailoring Logic", () => {
     currentLanguageSettings.mode = "manual";
     currentLanguageSettings.manual = "spanish";
 
-    await generatePdf("job-spanish-latex", {}, "desc");
+    await asTenant(() => generatePdf("job-spanish-latex", {}, "desc"));
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -554,7 +577,7 @@ describe("PDF Service Tailoring Logic", () => {
     mockProfile.sections.projects.items[0].description =
       "Responsable des APIs et du développement pour les équipes produit.";
 
-    await generatePdf("job-french-latex", {}, "desc");
+    await asTenant(() => generatePdf("job-french-latex", {}, "desc"));
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -576,7 +599,7 @@ describe("PDF Service Tailoring Logic", () => {
     const rxresume = await import("./rxresume");
 
     try {
-      await generatePdf("job-rxresume", {}, "desc");
+      await asTenant(() => generatePdf("job-rxresume", {}, "desc"));
 
       expect(mockResumeRenderer.renderResumePdf).not.toHaveBeenCalled();
       expect(rxresume.importResume).toHaveBeenCalledWith({

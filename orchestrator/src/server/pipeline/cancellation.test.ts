@@ -1,7 +1,18 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// runPipeline is fail-closed on tenancy (reads tenant-scoped settings before
+// the mocked steps). request-context is imported dynamically because this file
+// calls vi.resetModules() in beforeEach — a static import would bind a stale
+// AsyncLocalStorage instance rather than the one the re-imported orchestrator
+// uses.
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 const stepState = vi.hoisted(() => {
   let resolveDiscover:
@@ -90,6 +101,7 @@ describe.sequential("pipeline cancellation", () => {
   });
 
   it("marks run as cancelled at checkpoint and resets running state", async () => {
+    await asTenant(async () => {
     const pipeline = await import("./orchestrator");
     const pipelineRepo = await import("../repositories/pipeline");
     const steps = await import("./steps");
@@ -121,5 +133,6 @@ describe.sequential("pipeline cancellation", () => {
     );
     expect(pipeline.getPipelineStatus().isRunning).toBe(false);
     expect(pipeline.isPipelineCancelRequested()).toBe(false);
+    });
   });
 });

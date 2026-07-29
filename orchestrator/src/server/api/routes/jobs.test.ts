@@ -1,8 +1,33 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
 import { dirname, join } from "node:path";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startServer, stopServer } from "./test-utils";
+
+// Direct repo calls (createJob, updateJob) hit the fail-closed tenant guard.
+// request-context is imported dynamically because startServer() calls
+// vi.resetModules() (test-utils.ts), binding a fresh AsyncLocalStorage.
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
+// Tenant-scoped wrappers with the same signature as the repo functions so
+// call sites can be replaced with a simple s/createJob/createJobT/g.
+type CreateJobArgs = Parameters<
+  Awaited<ReturnType<typeof import("@server/repositories/jobs")>>["createJob"]
+>[0];
+type UpdateJobArgs = Parameters<
+  Awaited<ReturnType<typeof import("@server/repositories/jobs")>>["updateJob"]
+>;
+async function createJobT(args: CreateJobArgs) {
+  const { createJob } = await import("@server/repositories/jobs");
+  return asTenant(() => createJob(args));
+}
+async function updateJobT(...args: UpdateJobArgs) {
+  const { updateJob } = await import("@server/repositories/jobs");
+  return asTenant(() => updateJob(...args));
+}
 
 describe.sequential("Jobs API routes", () => {
   let server: Server;
@@ -21,7 +46,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("lists jobs and supports status filtering", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Test Role",
       employer: "Acme",
@@ -44,7 +69,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("supports lightweight and full jobs list views", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    await createJob({
+    await createJobT({
       source: "manual",
       title: "List View Role",
       employer: "Acme",
@@ -90,7 +115,7 @@ describe.sequential("Jobs API routes", () => {
     }));
 
     const { createJob } = await import("@server/repositories/jobs");
-    await createJob({
+    await createJobT({
       source: "manual",
       title: "Bench Mode Role",
       employer: "Acme",
@@ -117,7 +142,7 @@ describe.sequential("Jobs API routes", () => {
     const infoSpy = vi.spyOn(logger, "info");
     const { createJob } = await import("@server/repositories/jobs");
 
-    await createJob({
+    await createJobT({
       source: "manual",
       title: "No Benchmark Role",
       employer: "Acme",
@@ -143,8 +168,7 @@ describe.sequential("Jobs API routes", () => {
 
     const { logger: enabledLogger } = await import("@infra/logger");
     const enabledInfoSpy = vi.spyOn(enabledLogger, "info");
-    const enabledRepo = await import("@server/repositories/jobs");
-    await enabledRepo.createJob({
+    await createJobT({
       source: "manual",
       title: "Benchmark Role",
       employer: "Acme",
@@ -172,14 +196,14 @@ describe.sequential("Jobs API routes", () => {
 
   it("omits applied duplicate match metadata from list responses and keeps it in detail responses", async () => {
     const { createJob, updateJob } = await import("@server/repositories/jobs");
-    const appliedJob = await createJob({
+    const appliedJob = await createJobT({
       source: "manual",
       title: "Backend Engineer",
       employer: "Acme Ltd",
       jobUrl: "https://example.com/job/applied-original",
       jobDescription: "Original description",
     });
-    const repostedJob = await createJob({
+    const repostedJob = await createJobT({
       source: "manual",
       title: "Backend Engineer",
       employer: "Acme Limited",
@@ -187,11 +211,11 @@ describe.sequential("Jobs API routes", () => {
       jobDescription: "Reposted description",
     });
 
-    await updateJob(appliedJob.id, {
+    await updateJobT(appliedJob.id, {
       status: "applied",
       appliedAt: "2026-04-01T10:00:00.000Z",
     });
-    await updateJob(repostedJob.id, { status: "ready" });
+    await updateJobT(repostedJob.id, { status: "ready" });
 
     const listRes = await fetch(`${baseUrl}/api/jobs?view=list`);
     const listBody = await listRes.json();
@@ -223,14 +247,14 @@ describe.sequential("Jobs API routes", () => {
       "getAppliedDuplicateMatchCandidates",
     );
     const { createJob, updateJob } = jobsRepo;
-    const appliedJob = await createJob({
+    const appliedJob = await createJobT({
       source: "manual",
       title: "Applied Role",
       employer: "Acme",
       jobUrl: "https://example.com/job/applied-only",
       jobDescription: "Applied description",
     });
-    const inProgressJob = await createJob({
+    const inProgressJob = await createJobT({
       source: "manual",
       title: "In Progress Role",
       employer: "Acme",
@@ -238,11 +262,11 @@ describe.sequential("Jobs API routes", () => {
       jobDescription: "In progress description",
     });
 
-    await updateJob(appliedJob.id, {
+    await updateJobT(appliedJob.id, {
       status: "applied",
       appliedAt: "2026-04-01T10:00:00.000Z",
     });
-    await updateJob(inProgressJob.id, {
+    await updateJobT(inProgressJob.id, {
       status: "in_progress",
       appliedAt: "2026-04-02T10:00:00.000Z",
     });
@@ -268,22 +292,22 @@ describe.sequential("Jobs API routes", () => {
 
   it("returns jobs revision and supports status filtering", async () => {
     const { createJob, updateJob } = await import("@server/repositories/jobs");
-    const readyJob = await createJob({
+    const readyJob = await createJobT({
       source: "manual",
       title: "Ready Role",
       employer: "Acme",
       jobUrl: "https://example.com/job/revision-ready",
       jobDescription: "Ready description",
     });
-    const appliedJob = await createJob({
+    const appliedJob = await createJobT({
       source: "manual",
       title: "Applied Role",
       employer: "Beta",
       jobUrl: "https://example.com/job/revision-applied",
       jobDescription: "Applied description",
     });
-    await updateJob(readyJob.id, { status: "ready" });
-    await updateJob(appliedJob.id, { status: "applied" });
+    await updateJobT(readyJob.id, { status: "ready" });
+    await updateJobT(appliedJob.id, { status: "applied" });
 
     const allRes = await fetch(`${baseUrl}/api/jobs/revision`);
     const allBody = await allRes.json();
@@ -326,7 +350,7 @@ describe.sequential("Jobs API routes", () => {
   describe("job notes", () => {
     it("creates, lists, updates, and deletes notes for a job", async () => {
       const { createJob } = await import("@server/repositories/jobs");
-      const job = await createJob({
+      const job = await createJobT({
         source: "manual",
         title: "Notes Role",
         employer: "Acme",
@@ -413,7 +437,7 @@ describe.sequential("Jobs API routes", () => {
 
     it("validates note payloads", async () => {
       const { createJob } = await import("@server/repositories/jobs");
-      const job = await createJob({
+      const job = await createJobT({
         source: "manual",
         title: "Validation Role",
         employer: "Acme",
@@ -473,7 +497,7 @@ describe.sequential("Jobs API routes", () => {
 
     it("returns 404s for missing jobs and notes", async () => {
       const { createJob } = await import("@server/repositories/jobs");
-      const job = await createJob({
+      const job = await createJobT({
         source: "manual",
         title: "Missing Note Role",
         employer: "Acme",
@@ -541,7 +565,7 @@ describe.sequential("Jobs API routes", () => {
 
     it("orders notes by most recently updated first", async () => {
       const { createJob } = await import("@server/repositories/jobs");
-      const job = await createJob({
+      const job = await createJobT({
         source: "manual",
         title: "Ordering Role",
         employer: "Acme",
@@ -605,7 +629,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("uploads a PDF resume for a job and stores it in data/pdfs", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Upload PDF Role",
       employer: "Acme",
@@ -642,7 +666,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("rejects uploaded files that are not valid PDFs", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Upload Bad PDF Role",
       employer: "Acme",
@@ -673,7 +697,7 @@ describe.sequential("Jobs API routes", () => {
     const { getLegacyJobPdfPath } = await import(
       "@server/services/pdf-storage"
     );
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Legacy PDF Role",
       employer: "Acme",
@@ -695,7 +719,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("updates core job detail fields", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Original Title",
       employer: "Original Employer",
@@ -738,7 +762,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("blocks enabling tracer links when readiness check fails", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Tracer Blocked",
       employer: "Example Co",
@@ -784,14 +808,14 @@ describe.sequential("Jobs API routes", () => {
   it("allows updates for already-enabled tracer links without re-gating", async () => {
     const { createJob } = await import("@server/repositories/jobs");
     const { updateJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Tracer Already On",
       employer: "Example Co",
       jobUrl: "https://example.com/job/tracer-enabled",
       jobDescription: "Test description",
     });
-    await updateJob(job.id, { tracerLinksEnabled: true });
+    await updateJobT(job.id, { tracerLinksEnabled: true });
 
     const previousBaseUrl = process.env.JOBOPS_PUBLIC_BASE_URL;
     process.env.JOBOPS_PUBLIC_BASE_URL = "https://my-jobops.example.com";
@@ -851,7 +875,7 @@ describe.sequential("Jobs API routes", () => {
   it("prefers JOBOPS_PUBLIC_BASE_URL over forwarded headers for generate-pdf origin", async () => {
     const { createJob } = await import("@server/repositories/jobs");
     const { generateFinalPdf } = await import("@server/pipeline/index");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Origin Test",
       employer: "Example Co",
@@ -888,7 +912,7 @@ describe.sequential("Jobs API routes", () => {
   it("returns an upstream error when Reactive Resume PDF generation fails", async () => {
     const { createJob } = await import("@server/repositories/jobs");
     const { generateFinalPdf } = await import("@server/pipeline/index");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "PDF Failure Test",
       employer: "Example Co",
@@ -919,14 +943,14 @@ describe.sequential("Jobs API routes", () => {
 
   it("returns 409 when patching to a duplicate job URL", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const first = await createJob({
+    const first = await createJobT({
       source: "manual",
       title: "First",
       employer: "Acme",
       jobUrl: "https://example.com/job/first",
       jobDescription: "First description",
     });
-    const second = await createJob({
+    const second = await createJobT({
       source: "manual",
       title: "Second",
       employer: "Acme",
@@ -949,7 +973,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("validates job updates and supports skip/delete flow", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Test Role",
       employer: "Acme",
@@ -1009,21 +1033,21 @@ describe.sequential("Jobs API routes", () => {
 
   it("runs skip action with partial failures", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const discovered = await createJob({
+    const discovered = await createJobT({
       source: "manual",
       title: "Discovered Role",
       employer: "Acme",
       jobUrl: "https://example.com/job/action-discovered",
       jobDescription: "Test description",
     });
-    const ready = await createJob({
+    const ready = await createJobT({
       source: "manual",
       title: "Ready Role",
       employer: "Beta",
       jobUrl: "https://example.com/job/action-ready",
       jobDescription: "Test description",
     });
-    const applied = await createJob({
+    const applied = await createJobT({
       source: "manual",
       title: "Applied Role",
       employer: "Gamma",
@@ -1031,8 +1055,8 @@ describe.sequential("Jobs API routes", () => {
       jobDescription: "Test description",
     });
     const { updateJob } = await import("@server/repositories/jobs");
-    await updateJob(ready.id, { status: "ready" });
-    await updateJob(applied.id, { status: "applied" });
+    await updateJobT(ready.id, { status: "ready" });
+    await updateJobT(applied.id, { status: "applied" });
 
     const res = await fetch(`${baseUrl}/api/jobs/actions`, {
       method: "POST",
@@ -1060,21 +1084,21 @@ describe.sequential("Jobs API routes", () => {
 
   it("runs move_to_ready action and rejects ineligible statuses", async () => {
     const { createJob, updateJob } = await import("@server/repositories/jobs");
-    const discovered = await createJob({
+    const discovered = await createJobT({
       source: "manual",
       title: "New Role",
       employer: "Acme",
       jobUrl: "https://example.com/job/action-ready-1",
       jobDescription: "Test description",
     });
-    const ready = await createJob({
+    const ready = await createJobT({
       source: "manual",
       title: "Already Ready",
       employer: "Acme",
       jobUrl: "https://example.com/job/action-ready-2",
       jobDescription: "Test description",
     });
-    await updateJob(ready.id, { status: "ready" });
+    await updateJobT(ready.id, { status: "ready" });
     const { processJob } = await import("@server/pipeline/index");
     const previousBaseUrl = process.env.JOBOPS_PUBLIC_BASE_URL;
     process.env.JOBOPS_PUBLIC_BASE_URL = "https://canonical.jobops.example";
@@ -1113,7 +1137,7 @@ describe.sequential("Jobs API routes", () => {
   it("supports legacy move_to_ready endpoint", async () => {
     const { createJob } = await import("@server/repositories/jobs");
     const { processJob } = await import("@server/pipeline/index");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Legacy Ready Route",
       employer: "Acme",
@@ -1156,29 +1180,29 @@ describe.sequential("Jobs API routes", () => {
       reason: "Updated fit from action rescore",
     });
 
-    const discovered = await createJob({
+    const discovered = await createJobT({
       source: "manual",
       title: "Discovered Role",
       employer: "Acme",
       jobUrl: "https://example.com/job/action-rescore-1",
       jobDescription: "Test description",
     });
-    const ready = await createJob({
+    const ready = await createJobT({
       source: "manual",
       title: "Ready Role",
       employer: "Beta",
       jobUrl: "https://example.com/job/action-rescore-2",
       jobDescription: "Test description",
     });
-    const processing = await createJob({
+    const processing = await createJobT({
       source: "manual",
       title: "Processing Role",
       employer: "Gamma",
       jobUrl: "https://example.com/job/action-rescore-3",
       jobDescription: "Test description",
     });
-    await updateJob(ready.id, { status: "ready" });
-    await updateJob(processing.id, { status: "processing" });
+    await updateJobT(ready.id, { status: "ready" });
+    await updateJobT(processing.id, { status: "processing" });
 
     const res = await fetch(`${baseUrl}/api/jobs/actions`, {
       method: "POST",
@@ -1215,29 +1239,29 @@ describe.sequential("Jobs API routes", () => {
 
   it("streams job action progress with done counters", async () => {
     const { createJob, updateJob } = await import("@server/repositories/jobs");
-    const discovered = await createJob({
+    const discovered = await createJobT({
       source: "manual",
       title: "Discovered Role",
       employer: "Acme",
       jobUrl: "https://example.com/job/action-stream-1",
       jobDescription: "Test description",
     });
-    const ready = await createJob({
+    const ready = await createJobT({
       source: "manual",
       title: "Ready Role",
       employer: "Beta",
       jobUrl: "https://example.com/job/action-stream-2",
       jobDescription: "Test description",
     });
-    const applied = await createJob({
+    const applied = await createJobT({
       source: "manual",
       title: "Applied Role",
       employer: "Gamma",
       jobUrl: "https://example.com/job/action-stream-3",
       jobDescription: "Test description",
     });
-    await updateJob(ready.id, { status: "ready" });
-    await updateJob(applied.id, { status: "applied" });
+    await updateJobT(ready.id, { status: "ready" });
+    await updateJobT(applied.id, { status: "applied" });
 
     const res = await fetch(`${baseUrl}/api/jobs/actions/stream`, {
       method: "POST",
@@ -1327,7 +1351,7 @@ describe.sequential("Jobs API routes", () => {
     const { trackCanonicalActivationEvent } = await import(
       "@server/services/activation-funnel"
     );
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Test Role",
       employer: "Acme",
@@ -1364,7 +1388,7 @@ describe.sequential("Jobs API routes", () => {
       reason: "Updated fit",
     });
 
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Test Role",
       employer: "Acme",
@@ -1373,7 +1397,7 @@ describe.sequential("Jobs API routes", () => {
     });
 
     const { updateJob } = await import("@server/repositories/jobs");
-    await updateJob(job.id, {
+    await updateJobT(job.id, {
       suitabilityScore: 55,
       suitabilityReason: "Old fit",
     });
@@ -1396,50 +1420,50 @@ describe.sequential("Jobs API routes", () => {
     const { createJob, updateJob } = await import("@server/repositories/jobs");
 
     // Create jobs with different scores and statuses
-    const lowScoreJob = await createJob({
+    const lowScoreJob = await createJobT({
       source: "manual",
       title: "Low Score Job",
       employer: "Company A",
       jobUrl: "https://example.com/job/low",
       jobDescription: "Test description",
     });
-    await updateJob(lowScoreJob.id, { suitabilityScore: 30 });
+    await updateJobT(lowScoreJob.id, { suitabilityScore: 30 });
 
-    const mediumScoreJob = await createJob({
+    const mediumScoreJob = await createJobT({
       source: "manual",
       title: "Medium Score Job",
       employer: "Company B",
       jobUrl: "https://example.com/job/medium",
       jobDescription: "Test description",
     });
-    await updateJob(mediumScoreJob.id, { suitabilityScore: 60 });
+    await updateJobT(mediumScoreJob.id, { suitabilityScore: 60 });
 
-    const boundaryScoreJob = await createJob({
+    const boundaryScoreJob = await createJobT({
       source: "manual",
       title: "Boundary Score Job",
       employer: "Company Boundary",
       jobUrl: "https://example.com/job/boundary",
       jobDescription: "Test description",
     });
-    await updateJob(boundaryScoreJob.id, { suitabilityScore: 50 });
+    await updateJobT(boundaryScoreJob.id, { suitabilityScore: 50 });
 
-    const highScoreJob = await createJob({
+    const highScoreJob = await createJobT({
       source: "manual",
       title: "High Score Job",
       employer: "Company C",
       jobUrl: "https://example.com/job/high",
       jobDescription: "Test description",
     });
-    await updateJob(highScoreJob.id, { suitabilityScore: 90 });
+    await updateJobT(highScoreJob.id, { suitabilityScore: 90 });
 
-    const appliedLowScoreJob = await createJob({
+    const appliedLowScoreJob = await createJobT({
       source: "manual",
       title: "Applied Low Score Job",
       employer: "Company D",
       jobUrl: "https://example.com/job/applied-low",
       jobDescription: "Test description",
     });
-    await updateJob(appliedLowScoreJob.id, {
+    await updateJobT(appliedLowScoreJob.id, {
       suitabilityScore: 30,
       status: "applied",
     });
@@ -1504,7 +1528,7 @@ describe.sequential("Jobs API routes", () => {
     ]);
 
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
+    const job = await createJobT({
       source: "manual",
       title: "Sponsored Dev",
       employer: "Acme",
@@ -1526,7 +1550,7 @@ describe.sequential("Jobs API routes", () => {
 
     beforeEach(async () => {
       const { createJob } = await import("@server/repositories/jobs");
-      const job = await createJob({
+      const job = await createJobT({
         source: "manual",
         title: "Tracking Test",
         employer: "Test Corp",

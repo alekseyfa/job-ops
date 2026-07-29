@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { Server } from "node:http";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startServer, stopServer } from "./test-utils";
+
+// One test seeds a job via the tenant-scoped createJob repo. request-context is
+// imported dynamically because startServer() calls vi.resetModules() (test-utils.ts).
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 describe.sequential("Tracer links routes", () => {
   let server: Server;
@@ -235,13 +243,15 @@ describe.sequential("Tracer links routes", () => {
     }));
 
     const { createJob } = await import("@server/repositories/jobs");
-    const job = await createJob({
-      source: "manual",
-      title: "Tracer Auth Role",
-      employer: "Acme",
-      jobUrl: "https://example.com/jobs/tracer-auth-role",
-      jobDescription: "Tracer route auth coverage",
-    });
+    const job = await asTenant(() =>
+      createJob({
+        source: "manual",
+        title: "Tracer Auth Role",
+        employer: "Acme",
+        jobUrl: "https://example.com/jobs/tracer-auth-role",
+        jobDescription: "Tracer route auth coverage",
+      }),
+    );
 
     const unauthorized = await fetch(`${baseUrl}/api/tracer-links/analytics`);
     expect(unauthorized.status).toBe(401);

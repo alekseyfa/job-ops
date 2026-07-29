@@ -5,9 +5,15 @@
  * correctly calculates and stores sponsor match scores and names.
  */
 
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { createJob as createBaseJob } from "@shared/testing/factories";
 import type { Job } from "@shared/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 // Mock the visa-sponsors module
 vi.mock("../services/visa-sponsors/index", () => ({
@@ -136,8 +142,8 @@ describe("Sponsor Match Calculation", () => {
       ]);
 
       // Import and run pipeline
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // Verify searchSponsors was called with correct parameters
       expect(searchSponsors).toHaveBeenCalledWith("Acme Corporation Ltd", {
@@ -186,8 +192,8 @@ describe("Sponsor Match Calculation", () => {
         },
       ]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // Should include up to 2 perfect matches
       expect(updateJob).toHaveBeenCalledWith(
@@ -224,8 +230,8 @@ describe("Sponsor Match Calculation", () => {
         },
       ]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // Should only include the top match since none are 100%
       expect(updateJob).toHaveBeenCalledWith(
@@ -244,8 +250,8 @@ describe("Sponsor Match Calculation", () => {
       // Mock sponsor search returning no matches
       searchSponsors.mockResolvedValue([]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // sponsorMatchScore should be 0 (not set) and sponsorMatchNames undefined
       expect(updateJob).toHaveBeenCalledWith(
@@ -267,8 +273,8 @@ describe("Sponsor Match Calculation", () => {
       const mockJob = createJob({ employer: null as unknown as string });
       getUnscoredDiscoveredJobs.mockResolvedValue([mockJob]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // searchSponsors should not be called
       expect(searchSponsors).not.toHaveBeenCalled();
@@ -287,8 +293,8 @@ describe("Sponsor Match Calculation", () => {
       const mockJob = createJob({ employer: "" });
       getUnscoredDiscoveredJobs.mockResolvedValue([mockJob]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // searchSponsors should not be called for empty string
       expect(searchSponsors).not.toHaveBeenCalled();
@@ -301,8 +307,8 @@ describe("Sponsor Match Calculation", () => {
       getUnscoredDiscoveredJobs.mockResolvedValue([mockJob]);
       searchSponsors.mockResolvedValue([]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       expect(searchSponsors).toHaveBeenCalledWith("Test Company", {
         limit: 10,
@@ -324,8 +330,8 @@ describe("Sponsor Match Calculation", () => {
         },
       ]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // Single perfect match should be reported
       expect(updateJob).toHaveBeenCalledWith(
@@ -370,8 +376,8 @@ describe("Sponsor Match Calculation", () => {
           },
         ]);
 
-      const { runPipeline } = await import("./orchestrator");
-      await runPipeline({ sources: [], enableCrawling: false });
+      const { scoreJobsStep } = await import("./steps/score-jobs");
+      await asTenant(() => scoreJobsStep({ profile: {} }));
 
       // Verify both jobs were processed with different sponsor data
       expect(updateJob).toHaveBeenCalledTimes(2);

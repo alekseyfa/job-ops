@@ -1,5 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
+
+// Fail-closed tenancy: production wraps ingestion in runWithRequestContext, so
+// the test must supply a tenant context too. Without it getActiveTenantId() ->
+// requireTenantId() throws "Tenant context is required"; the ingestion
+// try/catch swallows it as a warn, so the symptom is "0 stage events created"
+// rather than a thrown error. Static import binds the same singleton
+// AsyncLocalStorage the statically-imported services use (no vi.resetModules
+// here), so this wrapper is sufficient. Wrap at the CALL SITE — a beforeEach
+// hook does not persist ALS into the it() body.
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
+
 vi.mock("@server/repositories/post-application-integrations", () => ({
   getPostApplicationIntegration: vi.fn().mockResolvedValue({
     id: "integration-1",
@@ -195,8 +210,8 @@ describe("gmail sync auto-log idempotency", () => {
         autoLinkTransitioned: false,
       });
 
-    await runGmailIngestionSync({ accountKey: "default", maxMessages: 1 });
-    await runGmailIngestionSync({ accountKey: "default", maxMessages: 1 });
+    await asTenant(() => runGmailIngestionSync({ accountKey: "default", maxMessages: 1 }));
+    await asTenant(() => runGmailIngestionSync({ accountKey: "default", maxMessages: 1 }));
 
     expect(upsertPostApplicationMessage).toHaveBeenCalledTimes(2);
     expect(transitionStage).toHaveBeenCalledTimes(1);

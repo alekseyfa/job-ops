@@ -1,7 +1,20 @@
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import type { PipelineConfig } from "@shared/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getProgress, resetProgress } from "../progress";
 import { discoverJobsStep } from "./discover-jobs";
+
+// discoverJobsStep reaches getAllJobUrls (tenant-scoped, fail-closed) in
+// production it runs inside the pipeline's tenant context. This file uses
+// static imports (no vi.resetModules), so a static request-context import
+// binds the same singleton AsyncLocalStorage the step uses. `discover` wraps
+// each call so both the resolve and reject paths run in tenant context.
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
+const discover: typeof discoverJobsStep = (args) =>
+  asTenant(() => discoverJobsStep(args));
 
 vi.mock("@server/repositories/settings", () => ({
   getAllSettings: vi.fn(),
@@ -29,7 +42,10 @@ const baseConfig: PipelineConfig = {
 describe("discoverJobsStep", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetProgress();
+    // resetProgress() reads getActiveTenantId() (fail-closed), so it must run
+    // inside a tenant context even in the hook. runWithRequestContext runs the
+    // sync callback synchronously, so this completes before beforeEach returns.
+    runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, () => resetProgress());
   });
 
   it("aggregates source errors for enabled sources", async () => {
@@ -89,7 +105,7 @@ describe("discoverJobsStep", () => {
       availableSources: ["indeed", "linkedin", "glassdoor", "ukvisajobs"],
     } as any);
 
-    const result = await discoverJobsStep({ mergedConfig: baseConfig });
+    const result = await discover({ mergedConfig: baseConfig });
 
     expect(result.discoveredJobs).toHaveLength(1);
     expect(result.sourceErrors).toEqual([
@@ -127,7 +143,7 @@ describe("discoverJobsStep", () => {
     } as any);
 
     await expect(
-      discoverJobsStep({
+      discover({
         mergedConfig: {
           ...baseConfig,
           sources: ["ukvisajobs"],
@@ -154,7 +170,7 @@ describe("discoverJobsStep", () => {
     } as any);
 
     await expect(
-      discoverJobsStep({
+      discover({
         mergedConfig: {
           ...baseConfig,
           sources: ["gradcracker", "ukvisajobs"],
@@ -180,7 +196,7 @@ describe("discoverJobsStep", () => {
       availableSources: [],
     } as any);
 
-    const result = await discoverJobsStep({
+    const result = await discover({
       mergedConfig: {
         ...baseConfig,
         sources: [],
@@ -233,7 +249,7 @@ describe("discoverJobsStep", () => {
       availableSources: ["indeed", "linkedin", "glassdoor"],
     } as any);
 
-    const result = await discoverJobsStep({
+    const result = await discover({
       mergedConfig: {
         ...baseConfig,
         sources: ["linkedin"],
@@ -308,7 +324,7 @@ describe("discoverJobsStep", () => {
       availableSources: ["gradcracker", "ukvisajobs"],
     } as any);
 
-    const result = await discoverJobsStep({
+    const result = await discover({
       mergedConfig: {
         ...baseConfig,
         sources: ["gradcracker", "ukvisajobs"],
@@ -373,7 +389,7 @@ describe("discoverJobsStep", () => {
       availableSources: ["indeed", "linkedin", "glassdoor"],
     } as any);
 
-    const result = await discoverJobsStep({
+    const result = await discover({
       mergedConfig: {
         ...baseConfig,
         sources: ["linkedin"],
@@ -426,7 +442,7 @@ describe("discoverJobsStep", () => {
       availableSources: ["indeed", "linkedin", "glassdoor"],
     } as any);
 
-    const result = await discoverJobsStep({
+    const result = await discover({
       mergedConfig: {
         ...baseConfig,
         sources: ["linkedin"],
@@ -491,7 +507,7 @@ describe("discoverJobsStep", () => {
       availableSources: ["indeed", "linkedin", "glassdoor"],
     } as any);
 
-    const result = await discoverJobsStep({
+    const result = await discover({
       mergedConfig: {
         ...baseConfig,
         sources: ["linkedin"],
@@ -544,7 +560,7 @@ describe("discoverJobsStep", () => {
       availableSources: ["indeed", "linkedin", "glassdoor"],
     } as any);
 
-    const result = await discoverJobsStep({
+    const result = await discover({
       mergedConfig: {
         ...baseConfig,
         sources: ["linkedin"],
@@ -609,14 +625,17 @@ describe("discoverJobsStep", () => {
       ],
     } as any);
 
-    await discoverJobsStep({
+    await discover({
       mergedConfig: {
         ...baseConfig,
         sources: ["linkedin", "gradcracker", "ukvisajobs"],
       },
     });
 
-    const progress = getProgress();
+    const progress = runWithRequestContext(
+      { tenantId: DEFAULT_TENANT_ID },
+      () => getProgress(),
+    );
     expect(progress.crawlingSourcesTotal).toBe(3);
     expect(progress.crawlingSourcesCompleted).toBe(3);
     expect(gradcrackerManifest.run).toHaveBeenCalledWith(

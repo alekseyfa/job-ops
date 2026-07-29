@@ -1,8 +1,21 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// The service + jobs repo are fail-closed on tenant context now, so every call
+// into the code under test runs inside the default tenant's request context.
+// request-context is imported DYNAMICALLY (after vi.resetModules) so we share
+// the SAME AsyncLocalStorage instance the re-imported modules use — a static
+// import would bind a stale ALS and runWithRequestContext would write to the
+// wrong store. Wrapping the whole it() body keeps the context live across every
+// await inside it (a beforeEach hook does NOT persist ALS into the it() body).
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 describe.sequential("Application Tracking Service", () => {
   let tempDir: string;
@@ -36,279 +49,287 @@ describe.sequential("Application Tracking Service", () => {
     vi.clearAllMocks();
   });
 
-  it("transitions stage and updates job status", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Test Developer",
-      employer: "Tech Corp",
-      jobUrl: "https://example.com/job/1",
-    });
+  it("transitions stage and updates job status", () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Test Developer",
+        employer: "Tech Corp",
+        jobUrl: "https://example.com/job/1",
+      });
 
-    // 1. Initial Transition (Applied)
-    const event1 = applicationTracking.transitionStage(job.id, "applied");
+      // 1. Initial Transition (Applied)
+      const event1 = applicationTracking.transitionStage(job.id, "applied");
 
-    expect(event1.toStage).toBe("applied");
+      expect(event1.toStage).toBe("applied");
 
-    // Check Job Status
-    const jobAfter1 = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobAfter1?.status).toBe("applied");
-    expect(jobAfter1?.appliedAt).toBeTruthy();
+      // Check Job Status
+      const jobAfter1 = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobAfter1?.status).toBe("applied");
+      expect(jobAfter1?.appliedAt).toBeTruthy();
 
-    // 2. Next Transition (Recruiter Screen)
-    const event2 = applicationTracking.transitionStage(
-      job.id,
-      "recruiter_screen",
-    );
-    expect(event2.fromStage).toBe("applied");
-    expect(event2.toStage).toBe("recruiter_screen");
+      // 2. Next Transition (Recruiter Screen)
+      const event2 = applicationTracking.transitionStage(
+        job.id,
+        "recruiter_screen",
+      );
+      expect(event2.fromStage).toBe("applied");
+      expect(event2.toStage).toBe("recruiter_screen");
 
-    // Check Job Status (moves to in_progress beyond applied stage)
-    const jobAfter2 = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobAfter2?.status).toBe("in_progress");
-  });
+      // Check Job Status (moves to in_progress beyond applied stage)
+      const jobAfter2 = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobAfter2?.status).toBe("in_progress");
+    }));
 
-  it("sets readyAt the first time a job moves to ready and does not overwrite it", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Full Stack Engineer",
-      employer: "Ready Corp",
-      jobUrl: "https://example.com/job/ready",
-    });
+  it("sets readyAt the first time a job moves to ready and does not overwrite it", () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Full Stack Engineer",
+        employer: "Ready Corp",
+        jobUrl: "https://example.com/job/ready",
+      });
 
-    const firstReady = await jobsRepo.updateJob(job.id, { status: "ready" });
-    expect(firstReady?.readyAt).toBeTruthy();
+      const firstReady = await jobsRepo.updateJob(job.id, { status: "ready" });
+      expect(firstReady?.readyAt).toBeTruthy();
 
-    const originalReadyAt = firstReady?.readyAt ?? null;
+      const originalReadyAt = firstReady?.readyAt ?? null;
 
-    const movedApplied = await jobsRepo.updateJob(job.id, {
-      status: "applied",
-    });
-    expect(movedApplied?.readyAt).toBe(originalReadyAt);
+      const movedApplied = await jobsRepo.updateJob(job.id, {
+        status: "applied",
+      });
+      expect(movedApplied?.readyAt).toBe(originalReadyAt);
 
-    const movedReadyAgain = await jobsRepo.updateJob(job.id, {
-      status: "ready",
-    });
-    expect(movedReadyAgain?.readyAt).toBe(originalReadyAt);
-  });
+      const movedReadyAgain = await jobsRepo.updateJob(job.id, {
+        status: "ready",
+      });
+      expect(movedReadyAgain?.readyAt).toBe(originalReadyAt);
+    }));
 
-  it("updates stage event and reflects in job status if latest", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Frontend Engineer",
-      employer: "Web Co",
-      jobUrl: "https://example.com/job/2",
-    });
+  it("updates stage event and reflects in job status if latest", () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Frontend Engineer",
+        employer: "Web Co",
+        jobUrl: "https://example.com/job/2",
+      });
 
-    const now = Math.floor(Date.now() / 1000);
-    applicationTracking.transitionStage(job.id, "applied", now - 100);
-    const event2 = applicationTracking.transitionStage(
-      job.id,
-      "recruiter_screen",
-      now,
-    );
+      const now = Math.floor(Date.now() / 1000);
+      applicationTracking.transitionStage(job.id, "applied", now - 100);
+      const event2 = applicationTracking.transitionStage(
+        job.id,
+        "recruiter_screen",
+        now,
+      );
 
-    // Update event2 (latest) to 'offer'
-    applicationTracking.updateStageEvent(event2.id, { toStage: "offer" });
+      // Update event2 (latest) to 'offer'
+      applicationTracking.updateStageEvent(event2.id, { toStage: "offer" });
 
-    // Verify Event Updated
-    const events = await applicationTracking.getStageEvents(job.id);
-    const updatedEvent2 = events.find((e: any) => e.id === event2.id);
-    expect(updatedEvent2?.toStage).toBe("offer");
+      // Verify Event Updated
+      const events = await applicationTracking.getStageEvents(job.id);
+      const updatedEvent2 = events.find((e: any) => e.id === event2.id);
+      expect(updatedEvent2?.toStage).toBe("offer");
 
-    // Verify Job Status Updated
-    const jobUpdated = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobUpdated?.status).toBe("in_progress");
-    expect(jobUpdated?.outcome).toBe("offer_accepted");
-  });
+      // Verify Job Status Updated
+      const jobUpdated = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobUpdated?.status).toBe("in_progress");
+      expect(jobUpdated?.outcome).toBe("offer_accepted");
+    }));
 
-  it("deletes stage event and reverts job status", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Backend Engineer",
-      employer: "Server Co",
-      jobUrl: "https://example.com/job/3",
-    });
+  it("deletes stage event and reverts job status", () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Backend Engineer",
+        employer: "Server Co",
+        jobUrl: "https://example.com/job/3",
+      });
 
-    const now = Math.floor(Date.now() / 1000);
-    applicationTracking.transitionStage(job.id, "applied", now - 100); // event1
+      const now = Math.floor(Date.now() / 1000);
+      applicationTracking.transitionStage(job.id, "applied", now - 100); // event1
 
-    // Simulate UI sending outcome for rejection
-    const event2 = applicationTracking.transitionStage(
-      job.id,
-      "closed",
-      now,
-      { reasonCode: "Skills" },
-      "rejected",
-    ); // event2
+      // Simulate UI sending outcome for rejection
+      const event2 = applicationTracking.transitionStage(
+        job.id,
+        "closed",
+        now,
+        { reasonCode: "Skills" },
+        "rejected",
+      ); // event2
 
-    // Verify job is closed/rejected
-    let jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.status).toBe("in_progress");
-    expect(jobCheck?.outcome).toBe("rejected");
+      // Verify job is closed/rejected
+      let jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.status).toBe("in_progress");
+      expect(jobCheck?.outcome).toBe("rejected");
 
-    // Delete event2
-    applicationTracking.deleteStageEvent(event2.id);
+      // Delete event2
+      applicationTracking.deleteStageEvent(event2.id);
 
-    // Verify job status reverted to event1 (applied)
-    jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.status).toBe("applied");
-    expect(jobCheck?.outcome).toBeNull();
-  });
+      // Verify job status reverted to event1 (applied)
+      jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.status).toBe("applied");
+      expect(jobCheck?.outcome).toBeNull();
+    }));
 
-  it('handles "no_change" transitions (notes)', async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "DevOps",
-      employer: "Cloud Inc",
-      jobUrl: "https://example.com/job/4",
-    });
+  it('handles "no_change" transitions (notes)', () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "DevOps",
+        employer: "Cloud Inc",
+        jobUrl: "https://example.com/job/4",
+      });
 
-    applicationTracking.transitionStage(job.id, "applied");
-    const noteEvent = applicationTracking.transitionStage(
-      job.id,
-      "no_change",
-      undefined,
-      {
-        note: "Just checking in",
-      },
-    );
+      applicationTracking.transitionStage(job.id, "applied");
+      const noteEvent = applicationTracking.transitionStage(
+        job.id,
+        "no_change",
+        undefined,
+        {
+          note: "Just checking in",
+        },
+      );
 
-    expect(noteEvent.toStage).toBe("applied");
+      expect(noteEvent.toStage).toBe("applied");
 
-    const events = await applicationTracking.getStageEvents(job.id);
-    expect(events).toHaveLength(2);
-    expect(events[1].metadata?.note).toBe("Just checking in");
-  });
+      const events = await applicationTracking.getStageEvents(job.id);
+      expect(events).toHaveLength(2);
+      expect(events[1].metadata?.note).toBe("Just checking in");
+    }));
 
-  it("updates closedAt when outcome changes via event update/delete", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "QA Engineer",
-      employer: "Test Labs",
-      jobUrl: "https://example.com/job/5",
-    });
+  it("updates closedAt when outcome changes via event update/delete", () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "QA Engineer",
+        employer: "Test Labs",
+        jobUrl: "https://example.com/job/5",
+      });
 
-    const now = Math.floor(Date.now() / 1000);
-    applicationTracking.transitionStage(job.id, "applied", now - 100);
-    const event2 = applicationTracking.transitionStage(
-      job.id,
-      "closed",
-      now,
-      { reasonCode: "Other" },
-      "rejected",
-    );
+      const now = Math.floor(Date.now() / 1000);
+      applicationTracking.transitionStage(job.id, "applied", now - 100);
+      const event2 = applicationTracking.transitionStage(
+        job.id,
+        "closed",
+        now,
+        { reasonCode: "Other" },
+        "rejected",
+      );
 
-    let jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.outcome).toBe("rejected");
-    expect(jobCheck?.closedAt).toBe(now);
+      let jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.outcome).toBe("rejected");
+      expect(jobCheck?.closedAt).toBe(now);
 
-    // 1. Update event2 to not be a closure
-    applicationTracking.updateStageEvent(event2.id, {
-      toStage: "technical_interview",
-    });
-    jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.outcome).toBeNull();
-    expect(jobCheck?.closedAt).toBeNull();
+      // 1. Update event2 to not be a closure
+      applicationTracking.updateStageEvent(event2.id, {
+        toStage: "technical_interview",
+      });
+      jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.outcome).toBeNull();
+      expect(jobCheck?.closedAt).toBeNull();
 
-    // 2. Update event2 back to a closure
-    applicationTracking.updateStageEvent(event2.id, { toStage: "offer" });
-    jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.outcome).toBe("offer_accepted");
-    expect(jobCheck?.closedAt).toBe(now);
+      // 2. Update event2 back to a closure
+      applicationTracking.updateStageEvent(event2.id, { toStage: "offer" });
+      jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.outcome).toBe("offer_accepted");
+      expect(jobCheck?.closedAt).toBe(now);
 
-    // 3. Delete the closure event
-    applicationTracking.deleteStageEvent(event2.id);
-    jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.outcome).toBeNull();
-    expect(jobCheck?.closedAt).toBeNull();
-  });
+      // 3. Delete the closure event
+      applicationTracking.deleteStageEvent(event2.id);
+      jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.outcome).toBeNull();
+      expect(jobCheck?.closedAt).toBeNull();
+    }));
 
-  it("sets closedAt when a closed stage event is logged without outcome", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Platform Engineer",
-      employer: "Infra Co",
-      jobUrl: "https://example.com/job/7",
-    });
+  it("sets closedAt when a closed stage event is logged without outcome", () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Platform Engineer",
+        employer: "Infra Co",
+        jobUrl: "https://example.com/job/7",
+      });
 
-    const now = Math.floor(Date.now() / 1000);
-    applicationTracking.transitionStage(job.id, "applied", now - 100);
-    applicationTracking.transitionStage(job.id, "closed", now);
+      const now = Math.floor(Date.now() / 1000);
+      applicationTracking.transitionStage(job.id, "applied", now - 100);
+      applicationTracking.transitionStage(job.id, "closed", now);
 
-    const jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.status).toBe("in_progress");
-    expect(jobCheck?.outcome).toBeNull();
-    expect(jobCheck?.closedAt).toBe(now);
-  });
+      const jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.status).toBe("in_progress");
+      expect(jobCheck?.outcome).toBeNull();
+      expect(jobCheck?.closedAt).toBe(now);
+    }));
 
-  it("preserves explicit outcome when updating metadata", async () => {
-    const job = await jobsRepo.createJob({
-      source: "manual",
-      title: "Support Engineer",
-      employer: "Helpdesk Co",
-      jobUrl: "https://example.com/job/6",
-    });
+  it("preserves explicit outcome when updating metadata", () =>
+    asTenant(async () => {
+      const job = await jobsRepo.createJob({
+        source: "manual",
+        title: "Support Engineer",
+        employer: "Helpdesk Co",
+        jobUrl: "https://example.com/job/6",
+      });
 
-    const now = Math.floor(Date.now() / 1000);
-    applicationTracking.transitionStage(job.id, "applied", now - 100);
-    const closedEvent = applicationTracking.transitionStage(
-      job.id,
-      "closed",
-      now,
-      { reasonCode: "Other" },
-      "withdrawn",
-    );
+      const now = Math.floor(Date.now() / 1000);
+      applicationTracking.transitionStage(job.id, "applied", now - 100);
+      const closedEvent = applicationTracking.transitionStage(
+        job.id,
+        "closed",
+        now,
+        { reasonCode: "Other" },
+        "withdrawn",
+      );
 
-    applicationTracking.updateStageEvent(closedEvent.id, {
-      metadata: { note: "Withdrew after offer" },
-    });
+      applicationTracking.updateStageEvent(closedEvent.id, {
+        metadata: { note: "Withdrew after offer" },
+      });
 
-    const jobCheck = await db
-      .select()
-      .from(schema.jobs)
-      .where(eq(schema.jobs.id, job.id))
-      .get();
-    expect(jobCheck?.outcome).toBe("withdrawn");
-    expect(jobCheck?.closedAt).toBe(now);
-  });
+      const jobCheck = await db
+        .select()
+        .from(schema.jobs)
+        .where(eq(schema.jobs.id, job.id))
+        .get();
+      expect(jobCheck?.outcome).toBe("withdrawn");
+      expect(jobCheck?.closedAt).toBe(now);
+    }));
 });

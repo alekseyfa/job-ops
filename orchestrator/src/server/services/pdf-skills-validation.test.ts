@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { generatePdf } from "./pdf";
 import { getProfile } from "./profile";
+
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 process.env.DATA_DIR = "/tmp";
 
@@ -244,7 +250,9 @@ describe("PDF Service Skills Validation", () => {
 
     const tailoredContent = { skills: newSkills };
 
-    await generatePdf("job-skills-1", tailoredContent, "Job Desc");
+    await asTenant(() =>
+      generatePdf("job-skills-1", tailoredContent, "Job Desc"),
+    );
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalled();
     const savedResumeJson = mockResumeRenderer.getLastResumeJson();
@@ -300,7 +308,9 @@ describe("PDF Service Skills Validation", () => {
     vi.mocked(getProfile).mockResolvedValueOnce(invalidProfile);
 
     // No tailoring, pass dummy path to bypass getProfile cache and use readFile mock
-    await generatePdf("job-no-tailor", {}, "Job Desc", "dummy.json");
+    await asTenant(() =>
+      generatePdf("job-no-tailor", {}, "Job Desc", "dummy.json"),
+    );
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalled();
     const savedResumeJson = mockResumeRenderer.getLastResumeJson();
@@ -352,7 +362,9 @@ describe("PDF Service Skills Validation", () => {
     } as any;
     vi.mocked(getProfile).mockResolvedValueOnce(profileWithoutIds);
 
-    await generatePdf("job-cuid2-test", {}, "Job Desc", "dummy.json");
+    await asTenant(() =>
+      generatePdf("job-cuid2-test", {}, "Job Desc", "dummy.json"),
+    );
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalled();
     const savedResumeJson = mockResumeRenderer.getLastResumeJson();
@@ -397,7 +409,9 @@ describe("PDF Service Skills Validation", () => {
     } as any;
     vi.mocked(getProfile).mockResolvedValueOnce(profileWithoutIds);
 
-    await generatePdf("job-no-skill-prefix", {}, "Job Desc", "dummy.json");
+    await asTenant(() =>
+      generatePdf("job-no-skill-prefix", {}, "Job Desc", "dummy.json"),
+    );
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalled();
     const savedResumeJson = mockResumeRenderer.getLastResumeJson();
@@ -433,7 +447,9 @@ describe("PDF Service Skills Validation", () => {
     };
     vi.mocked(getProfile).mockResolvedValueOnce(profileWithValidId);
 
-    await generatePdf("job-preserve-id", {}, "Job Desc", "dummy.json");
+    await asTenant(() =>
+      generatePdf("job-preserve-id", {}, "Job Desc", "dummy.json"),
+    );
 
     expect(mockResumeRenderer.renderResumePdf).toHaveBeenCalled();
     const savedResumeJson = mockResumeRenderer.getLastResumeJson();

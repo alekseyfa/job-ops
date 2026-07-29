@@ -1,6 +1,18 @@
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as settingsRepo from "../repositories/settings";
 import { inferManualJobDetails } from "./manualJob";
+
+// inferManualJobDetails runs inside the pipeline's tenant context in production
+// (resolveLlmModel/createConfiguredLlmService -> getEffectiveSettings ->
+// design-resume repo is fail-closed on tenancy). Unit tests must supply that
+// ambient context or the repo throws "Tenant context is required". Static import
+// binds the same singleton AsyncLocalStorage the statically-imported service
+// uses (no vi.resetModules here), so this wrapper is sufficient.
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 vi.mock("../repositories/settings", () => ({
   getSetting: vi.fn(),
@@ -32,7 +44,7 @@ describe("manual job inference", () => {
     delete process.env.OPENROUTER_API_KEY;
     vi.mocked(settingsRepo.getAllSettings).mockResolvedValue({});
 
-    const result = await inferManualJobDetails("JD text");
+    const result = await asTenant(() => inferManualJobDetails("JD text"));
 
     expect(result.job).toEqual({});
     expect(result.warning).toContain("LLM API key not set");
@@ -54,7 +66,7 @@ describe("manual job inference", () => {
       }),
     } as any);
 
-    const result = await inferManualJobDetails("JD text");
+    const result = await asTenant(() => inferManualJobDetails("JD text"));
 
     expect(result.warning).toBeUndefined();
     expect(result.job).toMatchObject({
@@ -71,7 +83,7 @@ describe("manual job inference", () => {
     } as any);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    const result = await inferManualJobDetails("JD text");
+    const result = await asTenant(() => inferManualJobDetails("JD text"));
 
     expect(result.job).toEqual({});
     expect(result.warning).toContain("AI inference failed");

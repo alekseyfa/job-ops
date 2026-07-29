@@ -7,9 +7,19 @@ import {
   DEMO_DEFAULT_SETTINGS,
   DEMO_DEFAULT_STAGE_EVENTS,
 } from "@server/config/demo-defaults";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const originalEnv = { ...process.env };
+
+// Settings/repo calls are fail-closed on tenant context now, so they must run
+// inside the default tenant's context. request-context is imported dynamically
+// (after vi.resetModules) so we share the SAME AsyncLocalStorage instance the
+// re-imported code-under-test uses — a static import would bind a stale ALS.
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 function sortedPairs(map: Record<string, string>) {
   return Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
@@ -66,27 +76,32 @@ describe.sequential("demo seed baseline", () => {
       "../repositories/settings"
     );
 
-    await resetDemoData();
+    const { allJobs, allSettings } = await asTenant(async () => {
+      await resetDemoData();
 
-    await db.delete(schema.jobs);
-    await db.insert(schema.jobs).values({
-      id: "mutated-job",
-      source: "manual",
-      title: "Mutated Job",
-      employer: "Mutated Employer",
-      jobUrl: "https://demo.job-ops.local/jobs/mutated",
-      status: "discovered",
+      await db.delete(schema.jobs);
+      await db.insert(schema.jobs).values({
+        id: "mutated-job",
+        source: "manual",
+        title: "Mutated Job",
+        employer: "Mutated Employer",
+        jobUrl: "https://demo.job-ops.local/jobs/mutated",
+        status: "discovered",
+      });
+      await setSetting("llmProvider", "openai");
+
+      await resetDemoData();
+
+      return {
+        allJobs: await db.select({ id: schema.jobs.id }).from(schema.jobs),
+        allSettings: (await getAllSettings()) as Record<string, string>,
+      };
     });
-    await setSetting("llmProvider", "openai");
 
-    await resetDemoData();
-
-    const allJobs = await db.select({ id: schema.jobs.id }).from(schema.jobs);
     expect(allJobs.map((row) => row.id).sort()).toEqual(
       DEMO_DEFAULT_JOBS.map((job) => job.id).sort(),
     );
 
-    const allSettings = (await getAllSettings()) as Record<string, string>;
     expect(sortedPairs(allSettings)).toEqual(
       sortedPairs(DEMO_DEFAULT_SETTINGS as Record<string, string>),
     );

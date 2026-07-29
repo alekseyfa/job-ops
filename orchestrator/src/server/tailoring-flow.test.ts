@@ -1,3 +1,5 @@
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { generateFinalPdf } from "./pipeline/orchestrator";
 import * as jobsRepo from "./repositories/jobs";
@@ -6,6 +8,16 @@ import * as pdfService from "./services/pdf";
 // Mock dependencies
 vi.mock("./repositories/jobs");
 vi.mock("./services/pdf");
+
+// generateFinalPdf reaches the fail-closed settings repo (getSetting ->
+// getActiveTenantId) on its success path. Production always runs inside a
+// tenant request context; unit tests must supply that ambient context or the
+// repo throws "Tenant context is required". Static import binds the same
+// singleton AsyncLocalStorage the statically-imported orchestrator uses (no
+// vi.resetModules here), so this wrapper is sufficient.
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 describe("Tailoring Flow", () => {
   beforeEach(() => {
@@ -38,7 +50,7 @@ describe("Tailoring Flow", () => {
 
     // 2. Action: Trigger the PDF generation
     // (This would be called when the user clicks "Generate PDF")
-    const result = await generateFinalPdf("job-tailored-123");
+    const result = await asTenant(() => generateFinalPdf("job-tailored-123"));
 
     // 3. Assertion: The operation was successful
     expect(result.success).toBe(true);
@@ -78,7 +90,7 @@ describe("Tailoring Flow", () => {
       pdfPath: "path.pdf",
     });
 
-    await generateFinalPdf("job-raw-456");
+    await asTenant(() => generateFinalPdf("job-raw-456"));
 
     expect(pdfService.generatePdf).toHaveBeenCalledWith(
       "job-raw-456",
@@ -116,7 +128,7 @@ describe("Tailoring Flow", () => {
       errorCode: "UPSTREAM_ERROR",
     });
 
-    const result = await generateFinalPdf("job-ready-789");
+    const result = await asTenant(() => generateFinalPdf("job-ready-789"));
 
     expect(result).toEqual({
       success: false,
@@ -142,7 +154,9 @@ describe("Tailoring Flow", () => {
 
     vi.mocked(jobsRepo.getJobById).mockResolvedValue(discoveredJob as any);
 
-    const result = await generateFinalPdf("job-discovered-bad-skills");
+    const result = await asTenant(() =>
+      generateFinalPdf("job-discovered-bad-skills"),
+    );
 
     expect(result.success).toBe(false);
     expect(pdfService.generatePdf).not.toHaveBeenCalled();

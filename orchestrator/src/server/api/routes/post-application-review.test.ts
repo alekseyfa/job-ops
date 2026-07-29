@@ -4,8 +4,19 @@ import type {
   PostApplicationMessage,
   PostApplicationRouterStageTarget,
 } from "@shared/types";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startServer, stopServer } from "./test-utils";
+
+// The HTTP routes get tenant context from middleware, but this test seeds
+// fixtures by calling tenant-scoped repos DIRECTLY (fail-closed → throws
+// "Tenant context is required"). request-context is imported dynamically
+// because startServer() calls vi.resetModules() (test-utils.ts), so a static
+// import would bind a stale AsyncLocalStorage.
+async function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  const { runWithRequestContext } = await import("@infra/request-context");
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
 
 describe.sequential("Post-Application Review Workflow API", () => {
   let server: Server;
@@ -34,6 +45,7 @@ describe.sequential("Post-Application Review Workflow API", () => {
       "@server/repositories/post-application-messages"
     );
 
+    const { job, message } = await asTenant(async () => {
     const job = await createJob({
       source: "manual",
       title: "Front End JavaScript Developer",
@@ -70,6 +82,9 @@ describe.sequential("Post-Application Review Workflow API", () => {
       processingStatus: "pending_user",
       matchedJobId:
         input?.matchedJobId === undefined ? job.id : input.matchedJobId,
+    });
+
+    return { job, message };
     });
 
     return { message, jobId: job.id };
@@ -122,11 +137,13 @@ describe.sequential("Post-Application Review Workflow API", () => {
   it("returns conflict on second approve and increments sync-run approval once", async () => {
     const { startPostApplicationSyncRun, getPostApplicationSyncRunById } =
       await import("@server/repositories/post-application-sync-runs");
-    const run = await startPostApplicationSyncRun({
-      provider: "gmail",
-      accountKey: "default",
-      integrationId: null,
-    });
+    const run = await asTenant(() =>
+      startPostApplicationSyncRun({
+        provider: "gmail",
+        accountKey: "default",
+        integrationId: null,
+      }),
+    );
     const { message, jobId } = await seedPendingMessage({ syncRunId: run.id });
 
     const firstRes = await fetch(
@@ -163,7 +180,7 @@ describe.sequential("Post-Application Review Workflow API", () => {
     expect(secondBody.ok).toBe(false);
     expect(secondBody.error.code).toBe("CONFLICT");
 
-    const updatedRun = await getPostApplicationSyncRunById(run.id);
+    const updatedRun = await asTenant(() => getPostApplicationSyncRunById(run.id));
     expect(updatedRun?.messagesApproved).toBe(1);
     expect(updatedRun?.messagesDenied).toBe(0);
   });
@@ -220,11 +237,13 @@ describe.sequential("Post-Application Review Workflow API", () => {
     const { startPostApplicationSyncRun } = await import(
       "@server/repositories/post-application-sync-runs"
     );
-    const run = await startPostApplicationSyncRun({
-      provider: "gmail",
-      accountKey: "default",
-      integrationId: null,
-    });
+    const run = await asTenant(() =>
+      startPostApplicationSyncRun({
+        provider: "gmail",
+        accountKey: "default",
+        integrationId: null,
+      }),
+    );
     const { message } = await seedPendingMessage({ syncRunId: run.id });
 
     const res = await fetch(
