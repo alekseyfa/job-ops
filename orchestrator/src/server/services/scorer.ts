@@ -498,26 +498,3 @@ function sanitizeProfileForPrompt(
     education: p.sections?.education?.items ?? [],
   };
 }
-
-/**
- * Score multiple jobs and return sorted by score (descending).
- */
-export async function scoreAndRankJobs(
-  jobs: Job[],
-  profile: Record<string, unknown>,
-): Promise<
-  Array<Job & { suitabilityScore: number; suitabilityReason: string }>
-> {
-  const scoredJobs = await Promise.all(
-    jobs.map(async (job) => {
-      const { score, reason } = await scoreJobSuitability(job, profile);
-      return {
-        ...job,
-        suitabilityScore: score,
-        suitabilityReason: reason,
-      };
-    }),
-  );
-
-  return scoredJobs.sort((a, b) => b.suitabilityScore - a.suitabilityScore);
-}
