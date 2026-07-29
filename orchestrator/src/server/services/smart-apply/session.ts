@@ -74,6 +74,14 @@ interface ActiveBrowserSession {
 }
 
 let active: ActiveBrowserSession | null = null;
+// Synchronous reservation flag closing the TOCTOU window between the
+// single-session guard and `active` being assigned. `active` can only be set
+// ~10-30s later (after the browser launches, the form is parsed and filled),
+// so two starts firing within that window would both pass an `if (active)`
+// guard and spawn two headed browsers on the shared :99 display, orphaning
+// one. Setting this synchronously before the first `await` — atomic in
+// single-threaded JS — makes the second start bail with ALREADY_ACTIVE.
+let reserving = false;
 let startupCleanupDone = false;
 
 async function ensureStartupCleanup(): Promise<void> {
@@ -334,16 +342,38 @@ export type StartSessionResult =
 export async function startSmartApplySession(args: {
   jobId: string;
 }): Promise<StartSessionResult> {
-  await ensureStartupCleanup();
-
-  // Reject if there's already an active browser session.
-  if (active) {
+  // Reject if there's already an active OR in-flight browser session. Both
+  // checks and the reservation happen synchronously (no await between them),
+  // so a concurrent double-start can't slip through the window before `active`
+  // is set far later in runBrowserSession.
+  if (active || reserving) {
     return {
       ok: false,
       code: "ALREADY_ACTIVE",
       message: "Another Smart Apply session is currently open. Finish or abort it first.",
     };
   }
+  reserving = true;
+
+  let handedOff = false;
+  try {
+    const result = await startSmartApplySessionInner(args);
+    // Only a successful start hands the reservation off to the background
+    // runBrowserSession (whose `finally` releases it once `active` is set or
+    // the attempt fails). Every other outcome — ineligible, viewer down, a
+    // thrown error — must release here, or the feature stays wedged forever.
+    handedOff = result.ok;
+    return result;
+  } finally {
+    if (!handedOff) reserving = false;
+  }
+}
+
+async function startSmartApplySessionInner(args: {
+  jobId: string;
+}): Promise<StartSessionResult> {
+  await ensureStartupCleanup();
+
   const dbActive = await getActiveSmartApplySession();
   if (dbActive) {
     // DB says we have a "ready" session but in-memory we have nothing —
@@ -502,6 +532,11 @@ async function runBrowserSession(
       status: "failed",
       errorMessage: message,
     });
+  } finally {
+    // The reservation has served its purpose: either `active` is now set (the
+    // guard keys off `active` from here on) or the launch failed and there's
+    // nothing to protect. Releasing lets the next start proceed.
+    reserving = false;
   }
 }
 

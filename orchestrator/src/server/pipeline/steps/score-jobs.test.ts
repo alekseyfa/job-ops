@@ -246,4 +246,73 @@ describe("scoreJobsStep auto-skip behavior", () => {
     expect(vi.mocked(scorer.scoreJobSuitability)).not.toHaveBeenCalled();
     expect(vi.mocked(jobsRepo.updateJob)).not.toHaveBeenCalled();
   });
+
+  describe("one bad job does not abort the batch", () => {
+    const twoJobs = () => [
+      createJob({
+        id: "job-bad",
+        title: "Bad Role",
+        employer: "Acme",
+        suitabilityScore: null,
+        suitabilityReason: null,
+      }),
+      createJob({
+        id: "job-good",
+        title: "Good Role",
+        employer: "Beta",
+        suitabilityScore: null,
+        suitabilityReason: null,
+      }),
+    ];
+
+    it("keeps scoring when one job's sponsor lookup throws (enrichment degrades to 0)", async () => {
+      const jobsRepo = await import("@server/repositories/jobs");
+      const scorer = await import("@server/services/scorer");
+      const visaSponsors = await import("@server/services/visa-sponsors/index");
+
+      vi.mocked(jobsRepo.getUnscoredDiscoveredJobs).mockResolvedValue(twoJobs());
+      vi.mocked(scorer.scoreJobSuitability).mockResolvedValue({
+        score: 70,
+        reason: "ok",
+      });
+      // First job's employer lookup throws; second succeeds.
+      vi.mocked(visaSponsors.searchSponsors)
+        .mockRejectedValueOnce(new Error("sponsor index not loaded"))
+        .mockResolvedValueOnce([]);
+
+      const result = await scoreJobsStep({ profile: {} });
+
+      // Both jobs still scored + persisted — the throw did not abort the run.
+      expect(result.scoredJobs).toHaveLength(2);
+      expect(vi.mocked(jobsRepo.updateJob)).toHaveBeenCalledTimes(2);
+      // The job whose sponsor lookup failed still gets a sponsorMatchScore of 0.
+      expect(vi.mocked(jobsRepo.updateJob)).toHaveBeenCalledWith(
+        "job-bad",
+        expect.objectContaining({ suitabilityScore: 70, sponsorMatchScore: 0 }),
+      );
+    });
+
+    it("skips only the job whose persist fails and still scores the rest", async () => {
+      const jobsRepo = await import("@server/repositories/jobs");
+      const scorer = await import("@server/services/scorer");
+
+      vi.mocked(jobsRepo.getUnscoredDiscoveredJobs).mockResolvedValue(twoJobs());
+      vi.mocked(scorer.scoreJobSuitability).mockResolvedValue({
+        score: 70,
+        reason: "ok",
+      });
+      // The first persist throws (e.g. transient DB error), the second succeeds.
+      vi.mocked(jobsRepo.updateJob)
+        .mockRejectedValueOnce(new Error("db write failed"))
+        .mockResolvedValue(null);
+
+      // Must not throw — the batch survives the single failed write.
+      const result = await scoreJobsStep({ profile: {} });
+
+      expect(vi.mocked(jobsRepo.updateJob)).toHaveBeenCalledTimes(2);
+      // Only the job that persisted successfully is counted as scored.
+      expect(result.scoredJobs).toHaveLength(1);
+      expect(result.scoredJobs[0].id).toBe("job-good");
+    });
+  });
 });

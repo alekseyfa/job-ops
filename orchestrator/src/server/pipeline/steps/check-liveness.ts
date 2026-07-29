@@ -51,7 +51,14 @@ const GREENHOUSE_URL_RE =
 // Single-job liveness check
 // ---------------------------------------------------------------------------
 
-type LivenessResult = "alive" | "expired" | "uncertain";
+// "expired": a DEFINITIVE signal the posting is gone — an HTTP 404/410 or an
+//   explicit closed/expired phrase in the page text.
+// "maybe_expired": a HEURISTIC signal only — a thin body or a "N jobs found"
+//   listing shell. SPA/JS-rendered boards and transient soft-404s trip these
+//   with a 200, so they must NOT cost a user their curated `ready` job (which
+//   already has a tailored PDF and is later hard-deleted once expired). The
+//   step demotes `discovered` jobs on this signal but protects `ready`.
+type LivenessResult = "alive" | "expired" | "maybe_expired" | "uncertain";
 
 async function checkGreenhouseLiveness(
   jobUrl: string,
@@ -75,13 +82,15 @@ async function checkGreenhouseLiveness(
 }
 
 function classifyBody(bodyText: string): LivenessResult {
+  // Explicit "this posting is closed" phrasing — definitive.
   for (const pattern of EXPIRED_BODY_PATTERNS) {
     if (pattern.test(bodyText)) return "expired";
   }
+  // A search/listing shell or a suspiciously thin body — heuristic only.
   for (const pattern of LISTING_PAGE_PATTERNS) {
-    if (pattern.test(bodyText)) return "expired";
+    if (pattern.test(bodyText)) return "maybe_expired";
   }
-  if (bodyText.length < MIN_CONTENT_LENGTH) return "expired";
+  if (bodyText.length < MIN_CONTENT_LENGTH) return "maybe_expired";
   return "alive";
 }
 
@@ -170,7 +179,16 @@ export async function checkLivenessStep(
     shouldStop: args.shouldCancel,
     task: async (job) => {
       const result = await checkJobLiveness(job);
-      if (result === "expired") {
+
+      // Definitive signal (404/410 or explicit closed phrase) expires any job.
+      // Heuristic signal (thin body / listing shell) expires ONLY `discovered`
+      // jobs — a curated `ready` job (tailored PDF, about to be applied to) is
+      // never destroyed on a guess, since expired jobs get hard-deleted later.
+      const shouldExpire =
+        result === "expired" ||
+        (result === "maybe_expired" && job.status === "discovered");
+
+      if (shouldExpire) {
         await jobsRepo.updateJob(job.id, { status: "expired" });
         expired += 1;
         livenessLogger.info("Job expired", {
@@ -178,6 +196,14 @@ export async function checkLivenessStep(
           employer: job.employer,
           source: job.source,
           jobUrl: job.jobUrl,
+          signal: result,
+          priorStatus: job.status,
+        });
+      } else if (result === "maybe_expired") {
+        livenessLogger.info("Kept job despite weak expiry signal", {
+          title: job.title,
+          jobUrl: job.jobUrl,
+          priorStatus: job.status,
         });
       }
     },

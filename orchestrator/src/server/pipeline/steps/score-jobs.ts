@@ -203,16 +203,27 @@ export async function scoreJobsStep(args: {
       let sponsorMatchScore = 0;
       let sponsorMatchNames: string | undefined;
 
+      // Sponsor matching is non-essential enrichment. A failure here (sponsor
+      // index not loaded for the tenant, odd employer string) must NOT lose
+      // the score we just paid an LLM call for, nor abort the whole run via
+      // the asyncPool's fail-fast — degrade to 0 and carry on.
       if (job.employer) {
-        const sponsorResults = await visaSponsors.searchSponsors(job.employer, {
-          limit: 10,
-          minScore: 50,
-        });
-
-        const summary =
-          visaSponsors.calculateSponsorMatchSummary(sponsorResults);
-        sponsorMatchScore = summary.sponsorMatchScore;
-        sponsorMatchNames = summary.sponsorMatchNames ?? undefined;
+        try {
+          const sponsorResults = await visaSponsors.searchSponsors(
+            job.employer,
+            { limit: 10, minScore: 50 },
+          );
+          const summary =
+            visaSponsors.calculateSponsorMatchSummary(sponsorResults);
+          sponsorMatchScore = summary.sponsorMatchScore;
+          sponsorMatchNames = summary.sponsorMatchNames ?? undefined;
+        } catch (error) {
+          logger.warn("Sponsor match lookup failed — scoring without it", {
+            jobId: job.id,
+            employer: job.employer,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
       // Check if job should be auto-skipped based on score threshold
@@ -222,17 +233,27 @@ export async function scoreJobsStep(args: {
         !Number.isNaN(autoSkipThreshold) &&
         score < autoSkipThreshold;
 
-      await jobsRepo.updateJob(job.id, {
-        suitabilityScore: score,
-        suitabilityReason: reason,
-        ...(matchAnalysis ? { matchAnalysis } : {}),
-        legitimacyTier: legitimacy.tier,
-        legitimacyScore: legitimacy.score,
-        legitimacySignals: legitimacy.signals,
-        sponsorMatchScore,
-        sponsorMatchNames,
-        ...(shouldAutoSkip ? { status: "skipped" } : {}),
-      });
+      // Persist the score. If the write fails for one job, skip that job and
+      // let the next run re-score it — one bad row must not sink the batch.
+      try {
+        await jobsRepo.updateJob(job.id, {
+          suitabilityScore: score,
+          suitabilityReason: reason,
+          ...(matchAnalysis ? { matchAnalysis } : {}),
+          legitimacyTier: legitimacy.tier,
+          legitimacyScore: legitimacy.score,
+          legitimacySignals: legitimacy.signals,
+          sponsorMatchScore,
+          sponsorMatchNames,
+          ...(shouldAutoSkip ? { status: "skipped" } : {}),
+        });
+      } catch (error) {
+        logger.warn("Failed to persist score for one job — skipping it", {
+          jobId: job.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
 
       if (shouldAutoSkip) {
         autoSkipped += 1;

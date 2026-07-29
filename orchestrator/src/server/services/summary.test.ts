@@ -1,6 +1,19 @@
 import type { ResumeProfile } from "@shared/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { runWithRequestContext } from "@infra/request-context";
+import { DEFAULT_TENANT_ID } from "@server/tenancy/constants";
+
+// generateTailoring runs inside the pipeline's tenant context in production
+// (-> getEffectiveSettings -> design-resume repo, fail-closed on tenancy).
+// Unit tests must supply that ambient context or the repo throws
+// "Tenant context is required". Static import binds the same singleton
+// AsyncLocalStorage the statically-imported service uses (no vi.resetModules
+// here), so this wrapper is sufficient.
+function asTenant<T>(fn: () => Promise<T>): Promise<T> {
+  return runWithRequestContext({ tenantId: DEFAULT_TENANT_ID }, fn);
+}
+
 const callJsonMock = vi.fn();
 const getProviderMock = vi.fn();
 const getBaseUrlMock = vi.fn();
@@ -27,6 +40,7 @@ vi.mock("./writing-style", async (importOriginal) => {
 });
 
 import { getSetting } from "../repositories/settings";
+import { LlmNotConfiguredError } from "./llm-errors";
 import {
   computeTailoringFingerprint,
   generateTailoring,
@@ -93,7 +107,7 @@ describe("generateTailoring", () => {
       },
     };
 
-    await generateTailoring("Build APIs", profile);
+    await asTenant(() => generateTailoring("Build APIs", profile));
 
     expect(callJsonMock).toHaveBeenCalledTimes(1);
 
@@ -132,12 +146,14 @@ describe("generateTailoring", () => {
       maxKeywordsPerSkill: null,
     });
 
-    await generateTailoring("Build APIs", {
-      basics: {
-        name: "Test User",
-        label: "Engineer",
-      },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: {
+          name: "Test User",
+          label: "Engineer",
+        },
+      }),
+    );
 
     const request = callJsonMock.mock.calls.at(-1)?.[0];
     expect(request?.messages?.[0]?.content).toContain(
@@ -158,12 +174,14 @@ describe("generateTailoring", () => {
         : null,
     );
 
-    await generateTailoring("Build APIs", {
-      basics: {
-        name: "Test User",
-        label: "Engineer",
-      },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: {
+          name: "Test User",
+          label: "Engineer",
+        },
+      }),
+    );
 
     const request = callJsonMock.mock.calls.at(-1)?.[0];
     expect(request?.messages?.[0]?.content).toContain(
@@ -183,9 +201,11 @@ describe("generateTailoring", () => {
       maxKeywordsPerSkill: null,
     });
 
-    await generateTailoring("Build APIs", {
-      basics: { name: "Test User", label: "Engineer" },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: { name: "Test User", label: "Engineer" },
+      }),
+    );
 
     const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
     expect(prompt).toContain("Maximum 35 words.");
@@ -203,9 +223,11 @@ describe("generateTailoring", () => {
       maxKeywordsPerSkill: null,
     });
 
-    await generateTailoring("Build APIs", {
-      basics: { name: "Test User", label: "Engineer" },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: { name: "Test User", label: "Engineer" },
+      }),
+    );
 
     const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
     expect(prompt).toContain("Maximum 1 word.");
@@ -223,9 +245,11 @@ describe("generateTailoring", () => {
       maxKeywordsPerSkill: null,
     });
 
-    await generateTailoring("Build APIs", {
-      basics: { name: "Test User", label: "Engineer" },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: { name: "Test User", label: "Engineer" },
+      }),
+    );
 
     const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
     expect(prompt).not.toContain("Maximum");
@@ -243,9 +267,11 @@ describe("generateTailoring", () => {
       maxKeywordsPerSkill: 8,
     });
 
-    await generateTailoring("Build APIs", {
-      basics: { name: "Test User", label: "Engineer" },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: { name: "Test User", label: "Engineer" },
+      }),
+    );
 
     const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
     expect(prompt).toContain("Maximum 8 keywords per category");
@@ -263,9 +289,11 @@ describe("generateTailoring", () => {
       maxKeywordsPerSkill: null,
     });
 
-    await generateTailoring("Build APIs", {
-      basics: { name: "Test User", label: "Engineer" },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: { name: "Test User", label: "Engineer" },
+      }),
+    );
 
     const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
     expect(prompt).not.toContain("keywords per category");
@@ -283,9 +311,11 @@ describe("generateTailoring", () => {
       maxKeywordsPerSkill: 8,
     });
 
-    await generateTailoring("Build APIs", {
-      basics: { name: "Test User", label: "Engineer" },
-    });
+    await asTenant(() =>
+      generateTailoring("Build APIs", {
+        basics: { name: "Test User", label: "Engineer" },
+      }),
+    );
 
     const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
     expect(prompt).toContain("Maximum 35 words.");
@@ -302,7 +332,7 @@ describe("generateTailoring", () => {
     };
 
     it("never instructs keyword stuffing (provenance-safe prompt)", async () => {
-      await generateTailoring("Build APIs", profile);
+      await asTenant(() => generateTailoring("Build APIs", profile));
       const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
       expect(prompt).not.toContain("Keyword Stuffing");
       expect(prompt).toContain(
@@ -311,7 +341,7 @@ describe("generateTailoring", () => {
     });
 
     it("renders empty scorer-signal lines when no matchAnalysis is given (baseline)", async () => {
-      await generateTailoring("Build APIs", profile);
+      await asTenant(() => generateTailoring("Build APIs", profile));
       const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
       // The section header is always present, but the values are empty.
       expect(prompt).toContain("SCORER SIGNAL");
@@ -319,15 +349,17 @@ describe("generateTailoring", () => {
     });
 
     it("omits the experience instruction unless includeExperience is set", async () => {
-      await generateTailoring("Build APIs", profile);
+      await asTenant(() => generateTailoring("Build APIs", profile));
       const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
       expect(prompt).not.toContain("EXPERIENCE TAILORING");
     });
 
     it("appends the rephrase-only experience instruction when includeExperience is set", async () => {
-      await generateTailoring("Build APIs", profile, null, {
-        includeExperience: true,
-      });
+      await asTenant(() =>
+        generateTailoring("Build APIs", profile, null, {
+          includeExperience: true,
+        }),
+      );
       const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
       expect(prompt).toContain("EXPERIENCE TAILORING");
       expect(prompt).toContain("NEVER invent");
@@ -337,23 +369,60 @@ describe("generateTailoring", () => {
     });
 
     it("injects priority keywords, missing skills, and tips from matchAnalysis", async () => {
-      await generateTailoring("Senior Backend Engineer with Python", profile, {
-        requirements: { met: [], missing: [], partial: [] },
-        skills: {
-          matched: [],
-          missing: ["GraphQL"],
-          transferable: [],
-          bonus: [],
-        },
-        experience: { levelMatch: "match", yearsRequired: null, yearsApparent: null },
-        keywords: { addToResume: ["distributed systems"] },
-        dealBreakers: [],
-        tailoringTips: ["Lead with the payments project"],
-      });
+      await asTenant(() =>
+        generateTailoring("Senior Backend Engineer with Python", profile, {
+          requirements: { met: [], missing: [], partial: [] },
+          skills: {
+            matched: [],
+            missing: ["GraphQL"],
+            transferable: [],
+            bonus: [],
+          },
+          experience: { levelMatch: "match", yearsRequired: null, yearsApparent: null },
+          keywords: { addToResume: ["distributed systems"] },
+          dealBreakers: [],
+          tailoringTips: ["Lead with the payments project"],
+        }),
+      );
       const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
       expect(prompt).toContain("distributed systems"); // title-class priority keyword
       expect(prompt).toContain("GraphQL"); // missing skill surfaced
       expect(prompt).toContain("Lead with the payments project"); // tailoring tip
+    });
+  });
+
+  describe("LLM error contract", () => {
+    const profile: ResumeProfile = {
+      basics: { name: "Test User", label: "Engineer" },
+    };
+
+    it("throws LlmNotConfiguredError on a config-class failure so the run pauses", async () => {
+      // Regression: a 401/invalid-key during the PROCESSING phase used to
+      // soft-fail here, so the run reported "completed" with 0 tailored jobs
+      // instead of pausing. It must now throw so the orchestrator pauses and
+      // tells the user to fix their settings (mirrors scorer.ts).
+      callJsonMock.mockResolvedValue({
+        success: false,
+        error: "401 Unauthorized: invalid api key",
+      });
+
+      await expect(
+        asTenant(() => generateTailoring("Build APIs", profile)),
+      ).rejects.toBeInstanceOf(LlmNotConfiguredError);
+    });
+
+    it("soft-fails (does NOT throw) on a transient failure so the job is retried next run", async () => {
+      callJsonMock.mockResolvedValue({
+        success: false,
+        error: "503 Service Unavailable: upstream timeout",
+      });
+
+      const result = await asTenant(() =>
+        generateTailoring("Build APIs", profile),
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("503 Service Unavailable");
     });
   });
 });

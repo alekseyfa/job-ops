@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { logger } from "@infra/logger";
 import type { JobMatchAnalysis, ResumeProfile } from "@shared/types";
 import { extractWeightedJdKeywords } from "./jd-keywords";
+import { classifyLlmError, LlmNotConfiguredError } from "./llm-errors";
 import type { JsonSchemaDefinition } from "./llm/types";
 import { createConfiguredLlmService, resolveLlmModel } from "./modelSelection";
 import {
@@ -154,10 +155,17 @@ export async function generateTailoring(
 
   if (!result.success) {
     const context = `provider=${llm.getProvider()} baseUrl=${llm.getBaseUrl()}`;
-    if (result.error.toLowerCase().includes("api key")) {
-      const message = `LLM API key not set, cannot generate tailoring. (${context})`;
+    // Mirror the scorer's error contract: a config-class failure (missing/bad
+    // key, auth, model-not-found) must throw LlmNotConfiguredError so the
+    // orchestrator PAUSES the run and tells the user to fix their settings.
+    // Previously this soft-failed on a naive "api key" substring check, so a
+    // 401/403 during processing let the run finish "completed" with 0 tailored
+    // jobs instead of pausing. Transient failures keep the soft-fail so the
+    // job is simply left un-tailored for the next run.
+    if (classifyLlmError(result.error) === "config") {
+      const message = `AI tailoring failed: ${result.error}. Check your LLM configuration in Settings → Integrations, then resume. (${context})`;
       logger.warn(message);
-      return { success: false, error: message };
+      throw new LlmNotConfiguredError(message);
     }
     return {
       success: false,
