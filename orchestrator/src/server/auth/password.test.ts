@@ -89,4 +89,16 @@ describe("auth/password", () => {
       }),
     ).resolves.toBe(false);
   });
+
+  it("hash length is exactly 86 chars — changing KEY_LENGTH breaks all stored credentials", async () => {
+    // 64-byte scrypt key → 86 base64url chars (no padding). This pins the
+    // wire format stored in the DB. If KEY_LENGTH changes in password.ts,
+    // every existing user is locked out with a correct password, because
+    // verifyPassword reads expected.length from the stored hash and re-derives
+    // with that length — a shorter stored hash would derive fewer bytes and
+    // timingSafeEqual would always return false.
+    const { passwordHash, passwordSalt } = await hashPassword(PASSWORD);
+    expect(passwordHash).toHaveLength(86);
+    expect(passwordSalt).toMatch(/^[A-Za-z0-9_-]+$/); // valid base64url, no padding
+  });
 });

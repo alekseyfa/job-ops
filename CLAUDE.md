@@ -37,6 +37,16 @@ Pre-existing errors in `linkedin-auto-apply` are known/acceptable. No new errors
 
 Never `git rm` or overwrite a `*.test.ts`/`*.spec.ts` unless the user explicitly approves. Fix code or update assertions instead. Ask before deleting a test for a removed feature.
 
+### Dead Code Deletion: Always Verify by Exported Symbol, Not Filename
+
+`git grep` for the *filename* misses imports by *symbol name* (e.g. a file exporting `isHttpUrl` is imported as `import { isHttpUrl } from "@infra/public-url"` — the path string may not appear in the importer). **Before deleting any source file as "dead":**
+
+1. Run `graphify query "<exported symbol names from the file>"` to check for inbound semantic edges in the knowledge graph.
+2. Then verify with `git grep "<symbol>"` as a backup.
+3. Both must return zero hits outside the file itself before deleting.
+
+This applies even when knip or other static tools claim the file is unused — they may not resolve path aliases or dynamic imports correctly. Deleting a file with hidden consumers breaks server startup and locks out all users.
+
 ### Pipeline Integrity Gate
 
 If touching anything under `orchestrator/src/server/pipeline/`, `services/job-screening*`, `services/relocation-filter*`, or `services/resume-keywords-loader*`, also run:
