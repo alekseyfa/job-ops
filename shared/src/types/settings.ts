@@ -227,6 +227,7 @@ export interface AppSettings {
   gmailNotificationsEnabled: Resolved<boolean>;
   penalizeMissingSalary: Resolved<boolean>;
   missingSalaryPenalty: Resolved<number>;
+  capScoreOnDealBreakers: Resolved<boolean>;
   autoSkipScoreThreshold: Resolved<number | null>;
   activeAtsBoardPresets: Resolved<string[]>;
 

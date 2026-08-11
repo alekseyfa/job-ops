@@ -201,6 +201,40 @@ const SCORING_SCHEMA: JsonSchemaDefinition = {
   },
 };
 
+// Must match the scoring prompt's own stated rule ("A missing hard
+// requirement ... caps the score at 50") — see scoringPromptTemplate's
+// CALIBRATION section in prompt-template-definitions.ts.
+const DEALBREAKER_SCORE_CAP = 50;
+
+/**
+ * Deterministic backstop for the prompt's own calibration rule. Local/
+ * smaller models reliably extract dealBreakers into the structured response
+ * but don't reliably self-apply the score cap the same prompt asks for —
+ * enforce it in code instead of trusting the model to follow its own rule.
+ * Returns the input unchanged (capApplied: false) when there's nothing to
+ * cap, so callers can skip logging a no-op.
+ */
+function applyDealBreakerCap(
+  score: number,
+  reason: string,
+  dealBreakers: string[] | undefined,
+): { score: number; reason: string; capApplied: boolean } {
+  if (
+    !dealBreakers ||
+    dealBreakers.length === 0 ||
+    score <= DEALBREAKER_SCORE_CAP
+  ) {
+    return { score, reason, capApplied: false };
+  }
+
+  const capText = `Score capped at ${DEALBREAKER_SCORE_CAP} due to unresolved hard requirement(s): ${dealBreakers.join("; ")}.`;
+  return {
+    score: DEALBREAKER_SCORE_CAP,
+    reason: `${reason} ${capText}`,
+    capApplied: true,
+  };
+}
+
 /**
  * Check if a job's salary field is missing/empty.
  * Returns true for null, empty string, or whitespace-only strings.
@@ -312,11 +346,33 @@ export async function scoreJobSuitability(
   const clampedReason = reason || "No explanation provided";
   const matchAnalysis = buildMatchAnalysisFromResponse(result.data);
 
-  // Apply salary penalty if enabled
-  const penaltyResult = applySalaryPenalty(job, clampedScore, clampedReason, {
-    penalizeMissingSalary: settings.penalizeMissingSalary.value,
-    missingSalaryPenalty: settings.missingSalaryPenalty.value,
-  });
+  // Enforce the scoring prompt's own "missing hard requirement caps score at
+  // 50" rule in code — models identify dealBreakers reliably but don't
+  // reliably self-apply the cap. Missing setting (e.g. older test fixtures)
+  // falls back to the registry default (enabled).
+  const capResult = (settings.capScoreOnDealBreakers?.value ?? true)
+    ? applyDealBreakerCap(clampedScore, clampedReason, result.data.dealBreakers)
+    : { score: clampedScore, reason: clampedReason, capApplied: false };
+
+  if (capResult.capApplied) {
+    logger.info("Applied dealbreaker score cap", {
+      jobId: job.id,
+      originalScore: clampedScore,
+      cappedScore: capResult.score,
+      dealBreakers: result.data.dealBreakers,
+    });
+  }
+
+  // Apply salary penalty if enabled (stacks on top of the dealbreaker cap)
+  const penaltyResult = applySalaryPenalty(
+    job,
+    capResult.score,
+    capResult.reason,
+    {
+      penalizeMissingSalary: settings.penalizeMissingSalary.value,
+      missingSalaryPenalty: settings.missingSalaryPenalty.value,
+    },
+  );
 
   return {
     score: penaltyResult.score,

@@ -324,6 +324,7 @@ export const createAppSettings = (
   gmailNotificationsEnabled: { value: true, default: true, override: null },
   penalizeMissingSalary: { value: false, default: false, override: null },
   missingSalaryPenalty: { value: 10, default: 10, override: null },
+  capScoreOnDealBreakers: { value: true, default: true, override: null },
   autoSkipScoreThreshold: { value: null, default: null, override: null },
   activeAtsBoardPresets: { value: [], default: [], override: null },
   ...overrides,

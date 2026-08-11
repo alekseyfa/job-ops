@@ -33,6 +33,7 @@ export const ScoringSettingsSection: React.FC<ScoringSettingsSectionProps> = ({
   const {
     penalizeMissingSalary,
     missingSalaryPenalty,
+    capScoreOnDealBreakers,
     autoSkipScoreThreshold,
     blockedCompanyKeywords,
     scoringInstructions,
@@ -124,6 +125,43 @@ export const ScoringSettingsSection: React.FC<ScoringSettingsSectionProps> = ({
             />
           </div>
         )}
+
+        <Separator />
+
+        {/* Cap score on dealbreakers toggle */}
+        <div className="flex items-start space-x-3">
+          <Controller
+            name="capScoreOnDealBreakers"
+            control={control}
+            render={({ field }) => (
+              <Checkbox
+                id="capScoreOnDealBreakers"
+                checked={field.value ?? capScoreOnDealBreakers.default}
+                onCheckedChange={(checked) => {
+                  field.onChange(
+                    checked === "indeterminate" ? null : checked === true,
+                  );
+                }}
+                disabled={isLoading || isSaving}
+              />
+            )}
+          />
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="capScoreOnDealBreakers"
+              className="text-sm font-medium leading-none cursor-pointer"
+            >
+              Cap Score When AI Flags a Dealbreaker
+            </label>
+            <p className="text-xs text-muted-foreground">
+              If the AI lists any dealbreakers (missing work permit,
+              mandatory language, on-site only, etc.) but still scores the
+              job above 50, force the score down to 50. Enforces the scoring
+              prompt's own calibration rule in code, since models don't
+              always apply it themselves.
+            </p>
+          </div>
+        </div>
 
         <Separator />
 

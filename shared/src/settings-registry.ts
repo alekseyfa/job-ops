@@ -779,6 +779,17 @@ export const settingsRegistry = {
     },
     serialize: serializeNullableNumber,
   },
+  capScoreOnDealBreakers: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    // Deterministic backstop for the scoring prompt's own "missing hard
+    // requirement caps the score at 50" rule — smaller/local models reliably
+    // extract dealBreakers but don't reliably self-apply the cap. Default on
+    // since it only ever lowers a score the model already flagged itself.
+    default: (): boolean => true,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
   autoSkipScoreThreshold: {
     kind: "typed" as const,
     schema: z.number().int().min(0).max(100),

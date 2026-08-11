@@ -140,12 +140,24 @@ JOB DESCRIPTION:
 SCORING INSTRUCTIONS:
 {{scoringInstructionsText}}
 
+REQUIRED REASONING ORDER (do this before writing the score):
+1. First identify dealBreakers and requirements.missing.
+2. THEN compute score. If dealBreakers is non-empty for any hard requirement
+   (citizenship, work authorization, mandatory language fluency, on-site-only
+   with no remote option, required degree/discipline not held), the score
+   MUST be <= 50, no exceptions, even if the rest of the profile is a strong
+   fit.
+
 CALIBRATION:
 - Most realistic candidates should score 40-65. Be honest, not generous.
 - Reserve 80+ for jobs that genuinely fit the candidate's profile end-to-end.
-- A missing hard requirement (e.g. work-permit, on-site city, specific degree) caps the score at 50.
+- A missing hard requirement (e.g. work-permit, on-site city, specific
+  degree, mandatory language fluency, or a required primary tech
+  stack/language not held by the candidate) caps the score at 50.
 
 IMPORTANT: Respond with ONLY a valid JSON object. No markdown, no code fences, no explanation outside the JSON.
+EVERY array item in the JSON below MUST be a plain string. Never use "->",
+never put a nested object or key/value pair inside an array item.
 
 REQUIRED FORMAT (this exact structure — fill every field; use empty arrays when nothing applies):
 {
@@ -159,7 +171,7 @@ REQUIRED FORMAT (this exact structure — fill every field; use empty arrays whe
   "skills": {
     "matched": ["<skill required by JD AND in profile>"],
     "missing": ["<skill required by JD, NOT in profile>"],
-    "transferable": ["<profile skill that maps to JD via analogous experience>"],
+    "transferable": ["<plain string: profile skill name and what it transfers to, no arrows/objects>"],
     "bonus": ["<profile skill that's valuable but not required>"]
   },
   "experience": {

@@ -104,6 +104,7 @@ const DEFAULT_FORM_VALUES: UpdateSettingsInput = {
   backupMaxCount: null,
   penalizeMissingSalary: null,
   missingSalaryPenalty: null,
+  capScoreOnDealBreakers: null,
   autoSkipScoreThreshold: null,
   blockedCompanyKeywords: [],
   scoringInstructions: "",
@@ -304,6 +305,7 @@ const SECTION_FIELD_MAP: Record<
   scoring: [
     "penalizeMissingSalary",
     "missingSalaryPenalty",
+    "capScoreOnDealBreakers",
     "autoSkipScoreThreshold",
     "blockedCompanyKeywords",
     "scoringInstructions",
@@ -400,6 +402,7 @@ const NULL_SETTINGS_PAYLOAD: UpdateSettingsInput = {
   backupMaxCount: null,
   penalizeMissingSalary: null,
   missingSalaryPenalty: null,
+  capScoreOnDealBreakers: null,
   autoSkipScoreThreshold: null,
   blockedCompanyKeywords: null,
   scoringInstructions: null,
@@ -451,6 +454,7 @@ const mapSettingsToForm = (data: AppSettings): UpdateSettingsInput => ({
   backupMaxCount: data.backupMaxCount.override,
   penalizeMissingSalary: data.penalizeMissingSalary.override,
   missingSalaryPenalty: data.missingSalaryPenalty.override,
+  capScoreOnDealBreakers: data.capScoreOnDealBreakers.override,
   autoSkipScoreThreshold: data.autoSkipScoreThreshold.override,
   blockedCompanyKeywords: data.blockedCompanyKeywords.override ?? [],
   scoringInstructions: data.scoringInstructions.override ?? "",
@@ -631,6 +635,10 @@ const getDerivedSettings = (settings: AppSettings | null) => {
       missingSalaryPenalty: {
         effective: settings?.missingSalaryPenalty?.value ?? 10,
         default: settings?.missingSalaryPenalty?.default ?? 10,
+      },
+      capScoreOnDealBreakers: {
+        effective: settings?.capScoreOnDealBreakers?.value ?? true,
+        default: settings?.capScoreOnDealBreakers?.default ?? true,
       },
       autoSkipScoreThreshold: {
         effective: settings?.autoSkipScoreThreshold?.value ?? null,
@@ -1141,6 +1149,10 @@ export const SettingsPage: React.FC = () => {
         missingSalaryPenalty: nullIfSame(
           data.missingSalaryPenalty,
           scoring.missingSalaryPenalty.default,
+        ),
+        capScoreOnDealBreakers: nullIfSame(
+          data.capScoreOnDealBreakers,
+          scoring.capScoreOnDealBreakers.default,
         ),
         autoSkipScoreThreshold: nullIfSame(
           data.autoSkipScoreThreshold,

@@ -292,6 +292,7 @@ describe("salary penalty", () => {
     getEffectiveSettingsMock.mockResolvedValue({
       penalizeMissingSalary: { value: true, default: true, override: null },
       missingSalaryPenalty: { value: 10, default: 10, override: null },
+      capScoreOnDealBreakers: { value: true, default: true, override: null },
       scoringInstructions: { value: "", default: "", override: null },
       scoringPromptTemplate: { value: "", default: "", override: null },
       rxresumeBaseResumeId: "base-resume-123",
@@ -641,6 +642,167 @@ describe("salary penalty", () => {
       expect(result.reason).toContain(
         "Score reduced by 25 points due to missing salary information",
       );
+    });
+  });
+
+  describe("dealbreaker score cap", () => {
+    it("caps score to 50 when dealBreakers present and score exceeds cap", async () => {
+      const { scoreJobSuitability } = await import("./scorer");
+      callJsonMock.mockResolvedValue({
+        success: true,
+        data: {
+          score: 85,
+          reason: "Strong technical fit",
+          dealBreakers: ["No visa sponsorship — unrestricted work authorization required"],
+        },
+      });
+
+      const job = createJob({
+        id: "test-job-deal-1",
+        title: "Engineer",
+        salary: "Competitive", // avoid the shared beforeEach's salary penalty
+      });
+      const result = await scoreJobSuitability(job, {});
+
+      expect(result.score).toBe(50);
+      expect(result.reason).toContain(
+        "Score capped at 50 due to unresolved hard requirement(s)",
+      );
+      expect(result.reason).toContain("No visa sponsorship");
+    });
+
+    it("does NOT cap when dealBreakers is an empty array", async () => {
+      const { scoreJobSuitability } = await import("./scorer");
+      callJsonMock.mockResolvedValue({
+        success: true,
+        data: { score: 85, reason: "Great fit", dealBreakers: [] },
+      });
+
+      const job = createJob({
+        id: "test-job-deal-2",
+        title: "Engineer",
+        salary: "Competitive",
+      });
+      const result = await scoreJobSuitability(job, {});
+
+      expect(result.score).toBe(85);
+      expect(result.reason).not.toContain("capped");
+    });
+
+    it("does NOT cap when dealBreakers is absent (older/simpler model responses)", async () => {
+      const { scoreJobSuitability } = await import("./scorer");
+      callJsonMock.mockResolvedValue({
+        success: true,
+        data: { score: 85, reason: "Great fit" },
+      });
+
+      const job = createJob({
+        id: "test-job-deal-3",
+        title: "Engineer",
+        salary: "Competitive",
+      });
+      const result = await scoreJobSuitability(job, {});
+
+      expect(result.score).toBe(85);
+      expect(result.reason).not.toContain("capped");
+    });
+
+    it("is a no-op when the score is already at or below the cap", async () => {
+      const { scoreJobSuitability } = await import("./scorer");
+      callJsonMock.mockResolvedValue({
+        success: true,
+        data: {
+          score: 40,
+          reason: "Weak fit",
+          dealBreakers: ["Missing required degree"],
+        },
+      });
+
+      const job = createJob({
+        id: "test-job-deal-4",
+        title: "Engineer",
+        salary: "Competitive",
+      });
+      const result = await scoreJobSuitability(job, {});
+
+      expect(result.score).toBe(40);
+      expect(result.reason).not.toContain("capped");
+    });
+
+    it("does not cap when capScoreOnDealBreakers setting is disabled", async () => {
+      const { scoreJobSuitability } = await import("./scorer");
+      getEffectiveSettingsMock.mockResolvedValue({
+        penalizeMissingSalary: { value: false, default: false, override: null },
+        missingSalaryPenalty: { value: 10, default: 10, override: null },
+        capScoreOnDealBreakers: { value: false, default: true, override: false },
+        rxresumeBaseResumeId: "base-resume-123",
+      } as any);
+      callJsonMock.mockResolvedValue({
+        success: true,
+        data: {
+          score: 90,
+          reason: "Great fit",
+          dealBreakers: ["No visa sponsorship"],
+        },
+      });
+
+      const job = createJob({ id: "test-job-deal-5", title: "Engineer" });
+      const result = await scoreJobSuitability(job, {});
+
+      expect(result.score).toBe(90);
+      expect(result.reason).not.toContain("capped");
+    });
+
+    it("does not throw when capScoreOnDealBreakers is absent from settings (falls back to enabled)", async () => {
+      const { scoreJobSuitability } = await import("./scorer");
+      getEffectiveSettingsMock.mockResolvedValue({
+        penalizeMissingSalary: { value: false, default: false, override: null },
+        missingSalaryPenalty: { value: 10, default: 10, override: null },
+        rxresumeBaseResumeId: "base-resume-123",
+      } as any);
+      callJsonMock.mockResolvedValue({
+        success: true,
+        data: {
+          score: 90,
+          reason: "Great fit",
+          dealBreakers: ["No visa sponsorship"],
+        },
+      });
+
+      const job = createJob({ id: "test-job-deal-6", title: "Engineer" });
+      const result = await scoreJobSuitability(job, {});
+
+      expect(result.score).toBe(50);
+    });
+
+    it("applies the cap before the salary penalty, stacking both reductions", async () => {
+      const { scoreJobSuitability } = await import("./scorer");
+      getEffectiveSettingsMock.mockResolvedValue({
+        penalizeMissingSalary: { value: true, default: true, override: null },
+        missingSalaryPenalty: { value: 10, default: 10, override: null },
+        capScoreOnDealBreakers: { value: true, default: true, override: null },
+        rxresumeBaseResumeId: "base-resume-123",
+      } as any);
+      callJsonMock.mockResolvedValue({
+        success: true,
+        data: {
+          score: 90,
+          reason: "Great fit",
+          dealBreakers: ["No visa sponsorship"],
+        },
+      });
+
+      const job = createJob({
+        id: "test-job-deal-7",
+        title: "Engineer",
+        salary: null,
+      });
+      const result = await scoreJobSuitability(job, {});
+
+      // Capped 90 -> 50, then salary penalty 50 - 10 = 40
+      expect(result.score).toBe(40);
+      expect(result.reason).toContain("capped at 50");
+      expect(result.reason).toContain("Score reduced by 10 points");
     });
   });
 
