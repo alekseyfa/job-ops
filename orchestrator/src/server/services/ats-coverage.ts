@@ -83,22 +83,46 @@ export function computeAtsCoverage(
   };
 }
 
+async function loadPdfParse(): Promise<
+  (buf: Buffer) => Promise<{ text: string }>
+> {
+  // Computed specifier so the bundler/test transformer doesn't statically
+  // resolve pdf-parse at load time (it's an optional runtime dependency).
+  // Imports the library entry directly to avoid pdf-parse's debug-mode
+  // test-fixture read that runs on the default import.
+  const moduleId = "pdf-parse/lib/pdf-parse.js";
+  const mod = (await import(/* @vite-ignore */ moduleId)) as {
+    default: (buf: Buffer) => Promise<{ text: string }>;
+  };
+  return mod.default;
+}
+
+/** Extract plain text from an in-memory PDF buffer. NON-FATAL: a parse
+ * failure returns null instead of throwing, so callers decide how to react. */
+export async function extractPdfTextFromBuffer(
+  buffer: Buffer,
+): Promise<string | null> {
+  try {
+    const pdfParse = await loadPdfParse();
+    const parsed = await pdfParse(buffer);
+    return parsed.text ?? null;
+  } catch (error) {
+    logger.warn("Failed to extract PDF text (non-fatal)", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 /**
  * Extract plain text from a rendered PDF. Uses pdf-parse via a lazy import so
  * a parse failure (or a missing dependency) is NON-FATAL — it returns null and
  * the caller simply skips the coverage report rather than failing PDF
- * generation. Imports the library entry directly to avoid pdf-parse's
- * debug-mode test-fixture read on import.
+ * generation.
  */
 export async function extractPdfText(pdfPath: string): Promise<string | null> {
   try {
-    // Computed specifier so the bundler/test transformer doesn't statically
-    // resolve pdf-parse at load time (it's an optional runtime dependency).
-    const moduleId = "pdf-parse/lib/pdf-parse.js";
-    const mod = (await import(/* @vite-ignore */ moduleId)) as {
-      default: (buf: Buffer) => Promise<{ text: string }>;
-    };
-    const pdfParse = mod.default;
+    const pdfParse = await loadPdfParse();
     const buffer = await readFile(pdfPath);
     const parsed = await pdfParse(buffer);
     return parsed.text ?? null;

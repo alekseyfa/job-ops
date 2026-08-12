@@ -6,6 +6,7 @@ import { buildDefaultReactiveResumeDocument } from "../rxresume/document";
 
 const modelSelection = vi.hoisted(() => ({
   resolveLlmRuntimeSettings: vi.fn(),
+  createConfiguredLlmService: vi.fn(),
 }));
 
 const designResumeService = vi.hoisted(() => ({
@@ -17,9 +18,14 @@ const requestContext = vi.hoisted(() => ({
   getRequestId: vi.fn(() => "req-123"),
 }));
 
+const pdfParse = vi.hoisted(() => ({ run: vi.fn() }));
+
 vi.mock("@server/services/modelSelection", () => modelSelection);
 vi.mock("./index", () => designResumeService);
 vi.mock("@server/infra/request-context", () => requestContext);
+vi.mock("pdf-parse/lib/pdf-parse.js", () => ({
+  default: (buf: Buffer) => pdfParse.run(buf),
+}));
 
 import { importDesignResumeFromFile } from "./import-file";
 
@@ -82,6 +88,7 @@ describe("importDesignResumeFromFile", () => {
       async ({ resumeJson }: { resumeJson: DesignResumeJson }) =>
         makeResumeDocument(resumeJson),
     );
+    pdfParse.run.mockRejectedValue(new Error("Invalid PDF structure."));
   });
 
   it("sends the attached file directly to the configured model and saves the normalized document", async () => {
@@ -155,33 +162,21 @@ describe("importDesignResumeFromFile", () => {
     expect(result.title).toBe("Taylor Resume");
   });
 
-  it("extracts DOCX text locally before sending it to Gemini", async () => {
+  it("extracts DOCX text locally and sends it through the generic LLM service (any provider, including keyless local ones)", async () => {
     modelSelection.resolveLlmRuntimeSettings.mockResolvedValueOnce({
-      provider: "gemini",
-      model: "google/gemini-3-flash-preview",
-      baseUrl: null,
-      apiKey: "gemini-test",
+      provider: "lmstudio",
+      model: "qwen3-14b-mlx",
+      baseUrl: "http://localhost:1234",
+      apiKey: null,
     });
 
-    const docxBase64 = await makeDocxBase64("Taylor Quinn\nSenior Engineer");
+    const callJson = vi.fn().mockResolvedValue({
+      success: true,
+      data: { basics: { name: "Taylor Quinn" } },
+    });
+    modelSelection.createConfiguredLlmService.mockResolvedValue({ callJson });
 
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          candidates: [
-            {
-              content: {
-                parts: [{ text: '{"basics":{"name":"Taylor Quinn"}}' }],
-              },
-            },
-          ],
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
-    );
+    const docxBase64 = await makeDocxBase64("Taylor Quinn\nSenior Engineer");
 
     await importDesignResumeFromFile({
       fileName: "resume.docx",
@@ -190,29 +185,73 @@ describe("importDesignResumeFromFile", () => {
       dataBase64: docxBase64,
     });
 
-    expect(fetch).toHaveBeenCalledWith(
-      expect.stringContaining(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
-      ),
-      expect.any(Object),
+    expect(fetch).not.toHaveBeenCalled();
+    expect(callJson).toHaveBeenCalledTimes(1);
+
+    const callArgs = callJson.mock.calls[0]?.[0];
+    expect(callArgs.model).toBe("qwen3-14b-mlx");
+    const userMessage = callArgs.messages.find(
+      (message: { role: string }) => message.role === "user",
     );
+    expect(userMessage.content).toContain("The resume file was uploaded as DOCX");
+    expect(userMessage.content).toContain("Taylor Quinn");
+    expect(userMessage.content).toContain("Senior Engineer");
 
-    const fetchCall = vi.mocked(fetch).mock.calls[0];
-    const body =
-      fetchCall?.[1] && "body" in fetchCall[1] ? fetchCall[1].body : "";
-    const parsedBody = JSON.parse(String(body)) as Record<string, unknown>;
-
-    expect(JSON.stringify(parsedBody)).not.toContain("inlineData");
-    expect(JSON.stringify(parsedBody)).not.toContain("input_file");
-
-    const contents = parsedBody.contents as Array<{
-      parts?: Array<{ text?: string }>;
-    }>;
-    expect(contents[0]?.parts?.[0]?.text).toContain(
-      "The resume file was uploaded as DOCX",
+    expect(
+      designResumeService.replaceCurrentDesignResumeDocument,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeJson: expect.objectContaining({
+          basics: expect.objectContaining({ name: "Taylor Quinn" }),
+        }),
+      }),
     );
-    expect(contents[0]?.parts?.[0]?.text).toContain("Taylor Quinn");
-    expect(contents[0]?.parts?.[0]?.text).toContain("Senior Engineer");
+  });
+
+  it("extracts PDF text locally and sends it through the generic LLM service when the provider lacks native file support (any provider, including keyless local ones)", async () => {
+    modelSelection.resolveLlmRuntimeSettings.mockResolvedValueOnce({
+      provider: "lmstudio",
+      model: "qwen3-14b-mlx",
+      baseUrl: "http://localhost:1234",
+      apiKey: null,
+    });
+    pdfParse.run.mockResolvedValueOnce({
+      text: "Taylor Quinn\nSenior Engineer",
+    });
+
+    const callJson = vi.fn().mockResolvedValue({
+      success: true,
+      data: { basics: { name: "Taylor Quinn" } },
+    });
+    modelSelection.createConfiguredLlmService.mockResolvedValue({ callJson });
+
+    await importDesignResumeFromFile({
+      fileName: "resume.pdf",
+      mediaType: "application/pdf",
+      dataBase64: Buffer.from("pdf-data").toString("base64"),
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(callJson).toHaveBeenCalledTimes(1);
+
+    const callArgs = callJson.mock.calls[0]?.[0];
+    expect(callArgs.model).toBe("qwen3-14b-mlx");
+    const userMessage = callArgs.messages.find(
+      (message: { role: string }) => message.role === "user",
+    );
+    expect(userMessage.content).toContain("The resume file was uploaded as PDF");
+    expect(userMessage.content).toContain("Taylor Quinn");
+    expect(userMessage.content).toContain("Senior Engineer");
+
+    expect(
+      designResumeService.replaceCurrentDesignResumeDocument,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resumeJson: expect.objectContaining({
+          basics: expect.objectContaining({ name: "Taylor Quinn" }),
+        }),
+      }),
+    );
   });
 
   it("repairs Gemini JSON with unescaped quotes inside description fields", async () => {
@@ -614,13 +653,14 @@ describe("importDesignResumeFromFile", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("returns a capability error when the configured provider does not support direct file import", async () => {
+  it("returns a capability error when local PDF text extraction fails and the provider has no native file import", async () => {
     modelSelection.resolveLlmRuntimeSettings.mockResolvedValueOnce({
       provider: "ollama",
       model: "llama3",
       baseUrl: "http://localhost:11434",
       apiKey: "unused",
     });
+    pdfParse.run.mockRejectedValueOnce(new Error("Invalid PDF structure."));
 
     await expect(
       importDesignResumeFromFile({
@@ -630,7 +670,7 @@ describe("importDesignResumeFromFile", () => {
       }),
     ).rejects.toMatchObject({
       status: 503,
-      message: expect.stringContaining("Resume file import is not available"),
+      message: expect.stringContaining("no extractable text layer"),
     });
   });
 

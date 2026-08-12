@@ -7,7 +7,10 @@ import {
 import { logger } from "@infra/logger";
 import { sanitizeUnknown } from "@infra/sanitize";
 import { getRequestId } from "@server/infra/request-context";
-import { resolveLlmRuntimeSettings } from "@server/services/modelSelection";
+import {
+  createConfiguredLlmService,
+  resolveLlmRuntimeSettings,
+} from "@server/services/modelSelection";
 import { normalizeReactiveResumeV5Document } from "@server/services/rxresume/document";
 import {
   getResumeSchemaValidationMessage,
@@ -16,6 +19,8 @@ import {
 import type { DesignResumeDocument, DesignResumeJson } from "@shared/types";
 import { jsonrepair } from "jsonrepair";
 import JSZip from "jszip";
+import { extractPdfTextFromBuffer } from "../ats-coverage";
+import type { JsonSchemaDefinition } from "../llm/types";
 import { buildHeaders, getResponseDetail, joinUrl } from "../llm/utils/http";
 import { parseErrorMessage, truncate } from "../llm/utils/string";
 import { replaceCurrentDesignResumeDocument } from "./index";
@@ -567,13 +572,17 @@ async function extractDocxText(decoded: Buffer): Promise<string> {
   return text;
 }
 
-function buildDocxPrompt(documentText: string, fileName: string): string {
+function buildLocalTextExtractionPrompt(args: {
+  documentText: string;
+  fileName: string;
+  sourceFormat: "DOCX" | "PDF";
+}): string {
   return `
-The resume file was uploaded as DOCX and converted locally to plain text before extraction.
-File name: ${fileName}
+The resume file was uploaded as ${args.sourceFormat} and converted locally to plain text before extraction.
+File name: ${args.fileName}
 
 Extracted resume text:
-${documentText}
+${args.documentText}
 
 ${buildUserPrompt()}
 `.trim();
@@ -753,7 +762,44 @@ function sanitizeNormalizedResume(input: unknown): DesignResumeJson {
 }
 
 function buildCapabilityErrorMessage(provider: string): string {
-  return `Resume file import is not available for the current AI provider (${provider}). Connect OpenAI, OpenRouter, Gemini, or Anthropic to import resumes. DOCX files are converted to text locally before extraction.`;
+  return `This PDF has no extractable text layer (it may be a scanned image), and the current AI provider (${provider}) does not support native PDF vision extraction. Connect OpenAI, OpenRouter, Gemini, Anthropic, or Bedrock to read image-only PDFs, or upload a text-based PDF or DOCX instead.`;
+}
+
+const RESUME_EXTRACTION_JSON_SCHEMA: JsonSchemaDefinition = {
+  name: "resume_extraction",
+  schema: {
+    type: "object",
+    properties: {},
+    required: [],
+    additionalProperties: true,
+  },
+};
+
+async function extractTextWithConfiguredLlm(args: {
+  documentText: string;
+  fileName: string;
+  model: string;
+  sourceFormat: "DOCX" | "PDF";
+}): Promise<string> {
+  const llm = await createConfiguredLlmService();
+  const result = await llm.callJson<unknown>({
+    model: args.model,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: buildLocalTextExtractionPrompt(args),
+      },
+    ],
+    jsonSchema: RESUME_EXTRACTION_JSON_SCHEMA,
+    maxRetries: 1,
+  });
+
+  if (!result.success) {
+    throw upstreamError(`AI resume extraction failed: ${result.error}`);
+  }
+
+  return JSON.stringify(result.data);
 }
 
 function isFileCapabilityError(message: string): boolean {
@@ -811,7 +857,6 @@ async function extractWithOpenAi(args: {
   mediaType: SupportedImportMediaType;
   fileName: string;
   dataBase64: string;
-  documentText?: string | null;
   requestId: string | undefined;
 }): Promise<string> {
   const url = joinUrl(
@@ -838,24 +883,17 @@ async function extractWithOpenAi(args: {
         },
         {
           role: "user",
-          content: args.documentText
-            ? [
-                {
-                  type: "input_text",
-                  text: buildDocxPrompt(args.documentText, args.fileName),
-                },
-              ]
-            : [
-                {
-                  type: "input_text",
-                  text: buildUserPrompt(),
-                },
-                {
-                  type: "input_file",
-                  filename: args.fileName,
-                  file_data: buildDataUrl(args.mediaType, args.dataBase64),
-                },
-              ],
+          content: [
+            {
+              type: "input_text",
+              text: buildUserPrompt(),
+            },
+            {
+              type: "input_file",
+              filename: args.fileName,
+              file_data: buildDataUrl(args.mediaType, args.dataBase64),
+            },
+          ],
         },
       ],
     }),
@@ -890,7 +928,6 @@ async function extractWithOpenRouter(args: {
   mediaType: SupportedImportMediaType;
   fileName: string;
   dataBase64: string;
-  documentText?: string | null;
   requestId: string | undefined;
 }): Promise<string> {
   const url = joinUrl(
@@ -923,21 +960,19 @@ async function extractWithOpenRouter(args: {
           },
           {
             role: "user",
-            content: args.documentText
-              ? buildDocxPrompt(args.documentText, args.fileName)
-              : [
-                  {
-                    type: "text",
-                    text: buildUserPrompt(),
-                  },
-                  {
-                    type: "file",
-                    file: {
-                      filename: args.fileName,
-                      file_data: buildDataUrl(args.mediaType, args.dataBase64),
-                    },
-                  },
-                ],
+            content: [
+              {
+                type: "text",
+                text: buildUserPrompt(),
+              },
+              {
+                type: "file",
+                file: {
+                  filename: args.fileName,
+                  file_data: buildDataUrl(args.mediaType, args.dataBase64),
+                },
+              },
+            ],
           },
         ],
         ...(args.mediaType === "application/pdf" && engine
@@ -1004,7 +1039,6 @@ async function extractWithGemini(args: {
   model: string;
   mediaType: SupportedImportMediaType;
   dataBase64: string;
-  documentText?: string | null;
   fileName: string;
   requestId: string | undefined;
 }): Promise<string> {
@@ -1024,23 +1058,17 @@ async function extractWithGemini(args: {
       contents: [
         {
           role: "user",
-          parts: args.documentText
-            ? [
-                {
-                  text: buildDocxPrompt(args.documentText, args.fileName),
-                },
-              ]
-            : [
-                {
-                  text: buildUserPrompt(),
-                },
-                {
-                  inlineData: {
-                    mimeType: args.mediaType,
-                    data: args.dataBase64,
-                  },
-                },
-              ],
+          parts: [
+            {
+              text: buildUserPrompt(),
+            },
+            {
+              inlineData: {
+                mimeType: args.mediaType,
+                data: args.dataBase64,
+              },
+            },
+          ],
         },
       ],
       generationConfig: {
@@ -1091,25 +1119,22 @@ async function extractWithAnthropic(args: {
   mediaType: SupportedImportMediaType;
   fileName: string;
   dataBase64: string;
-  documentText?: string | null;
   requestId: string | undefined;
 }): Promise<string> {
   const baseUrl = args.baseUrl || "https://api.anthropic.com";
   const url = joinUrl(baseUrl, "/v1/messages");
 
-  const userContent = args.documentText
-    ? [{ type: "text", text: buildDocxPrompt(args.documentText, args.fileName) }]
-    : [
-        {
-          type: "document",
-          source: {
-            type: "base64",
-            media_type: args.mediaType,
-            data: args.dataBase64,
-          },
-        },
-        { type: "text", text: buildUserPrompt() },
-      ];
+  const userContent = [
+    {
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: args.mediaType,
+        data: args.dataBase64,
+      },
+    },
+    { type: "text", text: buildUserPrompt() },
+  ];
 
   const response = await fetch(url, {
     method: "POST",
@@ -1162,7 +1187,6 @@ async function extractWithBedrock(args: {
   mediaType: SupportedImportMediaType;
   fileName: string;
   dataBase64: string;
-  documentText?: string | null;
   requestId: string | undefined;
 }): Promise<string> {
   const baseUrl = args.baseUrl || "https://bedrock-runtime.us-east-1.amazonaws.com";
@@ -1170,19 +1194,17 @@ async function extractWithBedrock(args: {
   // `:` in on-demand ARNs doesn't break the URL.
   const url = joinUrl(baseUrl, `/model/${encodeURIComponent(args.model)}/invoke`);
 
-  const userContent = args.documentText
-    ? [{ type: "text", text: buildDocxPrompt(args.documentText, args.fileName) }]
-    : [
-        {
-          type: "document",
-          source: {
-            type: "base64",
-            media_type: args.mediaType,
-            data: args.dataBase64,
-          },
-        },
-        { type: "text", text: buildUserPrompt() },
-      ];
+  const userContent = [
+    {
+      type: "document",
+      source: {
+        type: "base64",
+        media_type: args.mediaType,
+        data: args.dataBase64,
+      },
+    },
+    { type: "text", text: buildUserPrompt() },
+  ];
 
   const response = await fetch(url, {
     method: "POST",
@@ -1230,7 +1252,6 @@ async function extractResumeFromProvider(args: {
   mediaType: SupportedImportMediaType;
   fileName: string;
   dataBase64: string;
-  documentText?: string | null;
   requestId: string | undefined;
 }): Promise<string> {
   if (args.provider === "openai") {
@@ -1260,7 +1281,6 @@ export async function importDesignResumeFromFile(
   const requestId = getRequestId();
 
   const runtime = await resolveLlmRuntimeSettings();
-  const provider = normalizeRuntimeProvider(runtime.provider);
 
   logger.info("Design resume file import started", {
     requestId: requestId ?? null,
@@ -1271,32 +1291,54 @@ export async function importDesignResumeFromFile(
     byteSize: decoded.byteLength,
   });
 
-  if (!provider) {
-    throw serviceUnavailable(
-      buildCapabilityErrorMessage(runtime.provider ?? "unknown"),
-    );
-  }
-
-  if (!runtime.apiKey) {
-    throw serviceUnavailable(
-      "Connect your AI provider in Settings before importing a resume file.",
-    );
+  // Prefer the vendor's native file/vision upload when available (better
+  // fidelity on complex layouts). Otherwise fall back to local text
+  // extraction + the generic LlmService, same as DOCX — this is what makes
+  // PDF import work with keyless local providers (lmstudio, ollama). The
+  // fallback's text is extracted (and validated) up front, outside the
+  // try/catch below, so a "can't read this PDF" error is reported as-is
+  // instead of being reclassified as a 502 upstream error.
+  const provider = normalizeRuntimeProvider(runtime.provider);
+  const useNativeVisionForPdf =
+    mediaType !== DOCX_MIME && provider !== null && Boolean(runtime.apiKey);
+  let localPdfText: string | null = null;
+  if (mediaType !== DOCX_MIME && !useNativeVisionForPdf) {
+    localPdfText = await extractPdfTextFromBuffer(decoded);
+    if (!localPdfText?.trim()) {
+      throw serviceUnavailable(
+        buildCapabilityErrorMessage(runtime.provider ?? "unknown"),
+      );
+    }
   }
 
   try {
-    const documentText =
-      mediaType === DOCX_MIME ? await extractDocxText(decoded) : null;
-    const rawText = await extractResumeFromProvider({
-      provider,
-      apiKey: runtime.apiKey,
-      baseUrl: runtime.baseUrl,
-      model: runtime.model,
-      mediaType,
-      fileName,
-      dataBase64: normalizedBase64,
-      documentText,
-      requestId,
-    });
+    let rawText: string;
+    if (mediaType === DOCX_MIME) {
+      rawText = await extractTextWithConfiguredLlm({
+        documentText: await extractDocxText(decoded),
+        fileName,
+        model: runtime.model,
+        sourceFormat: "DOCX",
+      });
+    } else if (useNativeVisionForPdf && provider && runtime.apiKey) {
+      rawText = await extractResumeFromProvider({
+        provider,
+        apiKey: runtime.apiKey,
+        baseUrl: runtime.baseUrl,
+        model: runtime.model,
+        mediaType,
+        fileName,
+        dataBase64: normalizedBase64,
+        requestId,
+      });
+    } else {
+      rawText = await extractTextWithConfiguredLlm({
+        documentText: localPdfText as string,
+        fileName,
+        model: runtime.model,
+        sourceFormat: "PDF",
+      });
+    }
     const parsed = parseImportedResumeJson(rawText);
     const normalized = sanitizeNormalizedResume(parsed);
     const saved = await replaceCurrentDesignResumeDocument({
@@ -1308,7 +1350,7 @@ export async function importDesignResumeFromFile(
 
     logger.info("Design resume file import completed", {
       requestId: requestId ?? null,
-      provider,
+      provider: runtime.provider ?? null,
       model: runtime.model,
       fileName,
       mediaType,
@@ -1319,7 +1361,7 @@ export async function importDesignResumeFromFile(
   } catch (error) {
     logger.warn("Design resume file import failed", {
       requestId: requestId ?? null,
-      provider,
+      provider: runtime.provider ?? null,
       model: runtime.model,
       fileName,
       mediaType,
@@ -1329,7 +1371,7 @@ export async function importDesignResumeFromFile(
     if (error instanceof AppError) {
       if (isFileCapabilityError(error.message)) {
         throw serviceUnavailable(
-          `The configured ${provider} model could not accept this attached ${mediaType === "application/pdf" ? "PDF" : "DOCX"} file directly. Choose a model with native file support and try again.`,
+          `The configured ${runtime.provider ?? "AI"} model could not accept this attached ${mediaType === "application/pdf" ? "PDF" : "DOCX"} file directly. Choose a model with native file support and try again.`,
         );
       }
       if (error.status >= 500) {
@@ -1342,7 +1384,7 @@ export async function importDesignResumeFromFile(
       error instanceof Error ? error.message : "Resume import failed.";
     if (isFileCapabilityError(message)) {
       throw serviceUnavailable(
-        `The configured ${provider} model could not accept this attached ${mediaType === "application/pdf" ? "PDF" : "DOCX"} file directly. Choose a model with native file support and try again.`,
+        `The configured ${runtime.provider ?? "AI"} model could not accept this attached ${mediaType === "application/pdf" ? "PDF" : "DOCX"} file directly. Choose a model with native file support and try again.`,
       );
     }
 
