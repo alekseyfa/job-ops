@@ -1,6 +1,6 @@
 import { createJob } from "@shared/testing/factories";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { scoreJobsStep } from "./score-jobs";
+import { resolveScoringConcurrency, scoreJobsStep } from "./score-jobs";
 
 vi.mock("@infra/logger", () => ({
   logger: {
@@ -21,6 +21,10 @@ vi.mock("@server/repositories/settings", () => ({
 
 vi.mock("@server/services/scorer", () => ({
   scoreJobSuitability: vi.fn(),
+}));
+
+vi.mock("@server/services/modelSelection", () => ({
+  resolveLlmRuntimeSettings: vi.fn(),
 }));
 
 vi.mock("@server/services/ghost-job-detector", () => ({
@@ -52,6 +56,14 @@ describe("scoreJobsStep auto-skip behavior", () => {
     const settingsRepo = await import("@server/repositories/settings");
     const scorer = await import("@server/services/scorer");
     const visaSponsors = await import("@server/services/visa-sponsors/index");
+    const modelSelection = await import("@server/services/modelSelection");
+
+    vi.mocked(modelSelection.resolveLlmRuntimeSettings).mockResolvedValue({
+      provider: "openai",
+      model: "gpt-4.1",
+      baseUrl: null,
+      apiKey: "sk-test",
+    });
 
     vi.mocked(jobsRepo.getUnscoredDiscoveredJobs).mockResolvedValue([
       createJob({
@@ -314,5 +326,37 @@ describe("scoreJobsStep auto-skip behavior", () => {
       expect(result.scoredJobs).toHaveLength(1);
       expect(result.scoredJobs[0].id).toBe("job-good");
     });
+  });
+});
+
+describe("resolveScoringConcurrency", () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+  });
+
+  it("drops to 1 for local single-instance providers (lmstudio, ollama)", async () => {
+    const modelSelection = await import("@server/services/modelSelection");
+
+    for (const provider of ["lmstudio", "ollama"]) {
+      vi.mocked(modelSelection.resolveLlmRuntimeSettings).mockResolvedValue({
+        provider,
+        model: "local-model",
+        baseUrl: "http://localhost:1234",
+        apiKey: null,
+      });
+      expect(await resolveScoringConcurrency()).toBe(1);
+    }
+  });
+
+  it("stays at 8 for cloud providers", async () => {
+    const modelSelection = await import("@server/services/modelSelection");
+
+    vi.mocked(modelSelection.resolveLlmRuntimeSettings).mockResolvedValue({
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+      baseUrl: null,
+      apiKey: "sk-ant-test",
+    });
+    expect(await resolveScoringConcurrency()).toBe(8);
   });
 });

@@ -272,4 +272,42 @@ describe("provider adapters", () => {
     expect(responseSchema.additionalProperties).toBeUndefined();
     expect(itemSchema.additionalProperties).toBeUndefined();
   });
+
+  it("prefixes only the last message with /no_think for local providers (Qwen thinking suppression)", () => {
+    const conversation = [
+      { role: "system" as const, content: "be terse" },
+      { role: "user" as const, content: "score this job" },
+    ];
+
+    for (const strategy of [lmStudioStrategy, ollamaStrategy]) {
+      const request = strategy.buildRequest({
+        mode: "text",
+        baseUrl: strategy.defaultBaseUrl,
+        apiKey: null,
+        model: "local-model",
+        messages: conversation,
+        jsonSchema: schema,
+      });
+
+      const body = request.body as { messages: Array<{ content: string }> };
+      expect(body.messages[0].content).toBe("be terse");
+      expect(body.messages[1].content).toBe("/no_think\nscore this job");
+    }
+  });
+
+  it("sends an explicit generous max_tokens for local providers", () => {
+    for (const strategy of [lmStudioStrategy, ollamaStrategy]) {
+      const request = strategy.buildRequest({
+        mode: "text",
+        baseUrl: strategy.defaultBaseUrl,
+        apiKey: null,
+        model: "local-model",
+        messages,
+        jsonSchema: schema,
+      });
+
+      const body = request.body as Record<string, unknown>;
+      expect(body.max_tokens).toBe(4096);
+    }
+  });
 });

@@ -6,6 +6,7 @@ import {
   LlmNotConfiguredError,
   LlmTransientError,
 } from "@server/services/llm-errors";
+import { resolveLlmRuntimeSettings } from "@server/services/modelSelection";
 import { scoreJobSuitability } from "@server/services/scorer";
 import * as visaSponsors from "@server/services/visa-sponsors/index";
 import { asyncPool } from "@server/utils/async-pool";
@@ -17,6 +18,19 @@ import type { ScoredJob } from "./types";
 // Bumping from 4 → 8 cuts scoring wall-time roughly in half
 // with no quality impact (each call is independent).
 const SCORING_CONCURRENCY = 8;
+// lmstudio/ollama run a single local model process (one GPU context) — firing
+// 8 concurrent structured-output requests at it crashes the runtime or
+// corrupts its constrained-decoding stream. One request at a time is slower
+// but reliable.
+const LOCAL_SCORING_CONCURRENCY = 1;
+const LOCAL_LLM_PROVIDERS = new Set(["lmstudio", "ollama"]);
+
+export async function resolveScoringConcurrency(): Promise<number> {
+  const { provider } = await resolveLlmRuntimeSettings();
+  return LOCAL_LLM_PROVIDERS.has(provider ?? "")
+    ? LOCAL_SCORING_CONCURRENCY
+    : SCORING_CONCURRENCY;
+}
 
 /**
  * Per-run transient-failure threshold.  Below this fraction we silently
@@ -106,10 +120,11 @@ export async function scoreJobsStep(args: {
   let transientFailures = 0;
   let attemptedLlmCalls = 0;
   let pipelinePauseError: LlmNotConfiguredError | null = null;
+  const scoringConcurrency = await resolveScoringConcurrency();
 
   await asyncPool({
     items: unprocessedJobs,
-    concurrency: SCORING_CONCURRENCY,
+    concurrency: scoringConcurrency,
     shouldStop: () => args.shouldCancel?.() || pipelinePauseError !== null,
     task: async (job) => {
       if (args.shouldCancel?.() || pipelinePauseError) return;
@@ -287,7 +302,7 @@ export async function scoreJobsStep(args: {
     deferredCount,
     transientFailures,
     attemptedLlmCalls,
-    concurrency: SCORING_CONCURRENCY,
+    concurrency: scoringConcurrency,
   });
 
   return {

@@ -61,6 +61,24 @@ export function buildChatCompletionsBody(args: {
   return body;
 }
 
+// Qwen's chat template reads a "/no_think" directive off the current turn to
+// skip its hybrid reasoning pass. Local self-hosted models (lmstudio,
+// ollama) are the ones commonly run in this hybrid-thinking family, and
+// without this the model can burn its entire token budget on a hidden
+// <think> block, leaving nothing for the actual answer. Models that don't
+// recognize the token just see it as harmless leading text.
+export function suppressLocalThinking(
+  messages: LlmRequestOptions<unknown>["messages"],
+): LlmRequestOptions<unknown>["messages"] {
+  if (messages.length === 0) return messages;
+  const lastIndex = messages.length - 1;
+  return messages.map((message, index) =>
+    index === lastIndex
+      ? { ...message, content: `/no_think\n${message.content}` }
+      : message,
+  );
+}
+
 export function extractChatCompletionsText(response: unknown): string | null {
   const content = getNestedValue(response, [
     "choices",
