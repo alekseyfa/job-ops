@@ -7,6 +7,8 @@
 
 import "../config/env";
 import { closeDb } from "../db/index";
+import { runWithRequestContext } from "../infra/request-context";
+import { DEFAULT_TENANT_ID } from "../tenancy/constants";
 import { runPipeline } from "./orchestrator";
 
 async function main() {
@@ -15,10 +17,17 @@ async function main() {
   console.log(`   Started at: ${new Date().toISOString()}`);
   console.log("=".repeat(60));
 
-  const result = await runPipeline({
-    topN: parseInt(process.env.PIPELINE_TOP_N || "10", 10),
-    minSuitabilityScore: parseInt(process.env.PIPELINE_MIN_SCORE || "50", 10),
-  });
+  const result = await runWithRequestContext(
+    { tenantId: DEFAULT_TENANT_ID },
+    () =>
+      runPipeline({
+        topN: parseInt(process.env.PIPELINE_TOP_N || "10", 10),
+        minSuitabilityScore: parseInt(
+          process.env.PIPELINE_MIN_SCORE || "50",
+          10,
+        ),
+      }),
+  );
 
   console.log(`\n${"=".repeat(60)}`);
   console.log("📊 Pipeline Results:");

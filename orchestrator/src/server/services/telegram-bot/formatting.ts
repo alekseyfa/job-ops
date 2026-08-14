@@ -44,6 +44,14 @@ export function formatJobCard(job: Job): string {
   if (job.salary) lines.push(`💰 ${escapeHtml(job.salary)}`);
   if (job.suitabilityScore !== null)
     lines.push(`⭐ Score: ${job.suitabilityScore}/100`);
+  if (
+    job.matchAnalysis?.uncappedScore !== undefined &&
+    job.matchAnalysis.uncappedScore !== job.suitabilityScore
+  ) {
+    lines.push(
+      `⚠️ Would've scored ${job.matchAnalysis.uncappedScore} — capped for the deal-breaker(s) below, verify they're real`,
+    );
+  }
   if (job.legitimacyTier) {
     const emoji = LEGITIMACY_EMOJI[job.legitimacyTier];
     const label = LEGITIMACY_LABEL[job.legitimacyTier];

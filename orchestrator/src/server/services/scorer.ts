@@ -5,6 +5,7 @@
 import { logger } from "@infra/logger";
 import { getDefaultPromptTemplate } from "@shared/prompt-template-definitions.js";
 import type { Job, JobMatchAnalysis } from "@shared/types";
+import { stripHtmlTags } from "@shared/utils/string";
 import {
   classifyLlmError,
   LlmNotConfiguredError,
@@ -361,6 +362,9 @@ export async function scoreJobSuitability(
       cappedScore: capResult.score,
       dealBreakers: result.data.dealBreakers,
     });
+    if (matchAnalysis) {
+      matchAnalysis.uncappedScore = clampedScore;
+    }
   }
 
   // Apply salary penalty if enabled (stacks on top of the dealbreaker cap)
@@ -536,17 +540,32 @@ function sanitizeProfileForPrompt(
     };
   };
 
+  const stripField = (item: unknown, field: string): unknown => {
+    const record = item as Record<string, unknown>;
+    const value = record?.[field];
+    return typeof value === "string"
+      ? { ...record, [field]: stripHtmlTags(value) }
+      : item;
+  };
+
   const experienceItems = Array.isArray(p.sections?.experience?.items)
-    ? p.sections?.experience?.items.slice(0, 5)
+    ? p.sections?.experience?.items
+        .slice(0, 5)
+        .map((item) => stripField(item, "summary"))
     : [];
   const projectItems = Array.isArray(p.sections?.projects?.items)
-    ? p.sections?.projects?.items.slice(0, 6)
+    ? p.sections?.projects?.items
+        .slice(0, 6)
+        .map((item) => stripField(stripField(item, "summary"), "description"))
     : [];
+
+  const rawSummary = p.basics?.summary;
 
   return {
     basics: {
       label: p.basics?.label,
-      summary: p.basics?.summary,
+      summary:
+        typeof rawSummary === "string" ? stripHtmlTags(rawSummary) : rawSummary,
     },
     skills: p.sections?.skills ?? null,
     experience: experienceItems,

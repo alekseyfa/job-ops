@@ -163,6 +163,13 @@ export interface JobMatchAnalysis {
    * leave it undefined.
    */
   weightedKeywords?: WeightedKeyword[];
+  /**
+   * The pre-cap score the model originally returned, present only when
+   * `applyDealBreakerCap` forced the final score down to 50 — lets the UI
+   * show "would've scored X" so the candidate can judge whether the
+   * dealBreakers list is legitimate or a false positive.
+   */
+  uncappedScore?: number;
 }
 
 export interface WeightedKeyword {
