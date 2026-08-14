@@ -23,6 +23,7 @@
     "db:clear": "tsx src/server/db/clear.ts",
     "db:drop": "tsx src/server/db/clear.ts --drop",
     "pipeline:run": "tsx src/server/pipeline/run.ts",
+    "eval:scoring": "tsx src/server/pipeline/scoring-eval.ts",
     "test": "vitest",
     "test:run": "vitest run"
   },

@@ -61,6 +61,29 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "<repo-path>:/app" -w /app node:22-slim \
 
 All three must pass. If you change the pipeline contract, update both the test AND `### Pipeline Step Ordering` below in the same commit.
 
+### Scoring Accuracy Gate
+
+Two tiers guard against the scorer silently producing bad matches (real incident: raw HTML from the resume import reached the scoring prompt unstripped, and the LLM repeatedly scored fully-populated resumes as "incomplete" — nothing crashed, no test caught it, only a live pipeline run against real data surfaced it).
+
+**Tier 1 — fast, deterministic, mocked LLM (part of the standard `vitest run` gate above, MUST pass):**
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm -v "<repo-path>:/app" -w /app node:22-slim \
+  sh -c "cd orchestrator && ./node_modules/.bin/vitest run src/server/services/scorer.accuracy.test.ts"
+```
+
+`scorer.accuracy.test.ts` locks in the *prompt contract*: no raw HTML tags ever reach the LLM, resume content survives the strip (words, not just tags, must remain), the experience/project array caps don't silently drop data, job-description truncation is explicit not silent, and the dealbreaker-cap visibility field (`matchAnalysis.uncappedScore`) is populated correctly. It mocks only the outward LLM call — everything else (`sanitizeProfileForPrompt`, `buildScoringPrompt`, `renderPromptTemplate`, the dealbreaker cap, the salary penalty) runs for real. Fixtures live in `services/scoring-fixtures.ts`.
+
+**Tier 2 — live semantic eval, NOT part of the fast gate, run manually:**
+
+```bash
+docker exec job-ops npm run eval:scoring   # or: npm run eval:scoring, inside the container
+```
+
+`pipeline/scoring-eval.ts` runs `scoreJobSuitability()` for real against whatever LLM is actually configured (local or cloud), on three fixed fixture cases with an unambiguous expected direction (strong match, clear mismatch, hard dealbreaker), and asserts score bands + that the reason never hedges with "profile is incomplete"-style language. This is the only check that can catch the class of bug Tier 1 can't: a well-formed prompt that a weak/misconfigured model still scores badly. It needs a working LLM connection, takes ~30-90s, and can flake on a single case with a weak local model — a *repeated* failure, or any "incomplete profile" hedge, is the signal to act on, not one noisy run.
+
+**If you touch `services/scorer.ts`, `services/scoring-fixtures.ts`, `shared/src/prompt-template-definitions.ts`'s `scoringPromptTemplate`, or `design-resume/index.ts`'s `designResumeToProfile`: run Tier 1 (mandatory) and strongly consider Tier 2 before reporting done.**
+
 ## Mandatory: Changelog Notifications
 
 After user-facing changes, ask: *"Should I add this to the changelog?"*. If yes, add to `orchestrator/src/server/services/telegram-bot/changelog.ts` (newest first): `version`, `date` (YYYY-MM-DD), `items[]` with `title` (emoji + name), `description` (plain language, 1–2 sentences), optional `tip`.
