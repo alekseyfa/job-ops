@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import {
   AppError,
@@ -1634,12 +1635,26 @@ jobsRouter.post("/:id/pdf", async (req: Request, res: Response) => {
 
 jobsRouter.get("/:id/pdf", async (req: Request, res: Response) => {
   const currentJob = await jobsRepo.getJobById(req.params.id);
-  if (!currentJob || !(await pdfExists(req.params.id))) {
+  if (!currentJob) {
     fail(res, notFound("PDF not found"));
     return;
   }
 
-  const pdfPath = getPdfPath(req.params.id);
+  // Prefer the path the DB actually recorded: generatePdf() may have written
+  // a personalized filename (PersonName_Company_CV.pdf) that getPdfPath()'s
+  // guessed default (resume_<jobId>.pdf) won't match. Fall back to the
+  // guessed/legacy lookup only when no DB path is on record.
+  const pdfPath =
+    currentJob.pdfPath && existsSync(currentJob.pdfPath)
+      ? currentJob.pdfPath
+      : (await pdfExists(req.params.id))
+        ? getPdfPath(req.params.id)
+        : null;
+  if (!pdfPath) {
+    fail(res, notFound("PDF not found"));
+    return;
+  }
+
   res.setHeader("Cache-Control", "private, max-age=60");
   res.sendFile(pdfPath, (error) => {
     if (error) {

@@ -717,6 +717,39 @@ describe.sequential("Jobs API routes", () => {
     expect(content).toContain("Legacy resume");
   });
 
+  it("serves a personalized PDF filename (PersonName_Company_CV.pdf) recorded in the DB", async () => {
+    // Regression test: generatePdf() can write a personalized filename that
+    // doesn't match getPdfPath()'s guessed default (resume_<jobId>.pdf) or
+    // the legacy path, so the route must trust job.pdfPath from the DB
+    // instead of recomputing a filename it then fails to find.
+    const job = await createJobT({
+      source: "manual",
+      title: "Personalized PDF Role",
+      employer: "Acme",
+      jobUrl: "https://example.com/job/personalized-pdf",
+      jobDescription: "Personalized filename coverage",
+    });
+
+    const personalizedPdfPath = join(
+      tempDir,
+      "pdfs",
+      "tenant_default",
+      `Jane_Doe_Acme_${job.id.slice(0, 8)}_CV.pdf`,
+    );
+    await mkdir(dirname(personalizedPdfPath), { recursive: true });
+    await writeFile(
+      personalizedPdfPath,
+      Buffer.from("%PDF-1.7\nPersonalized resume\n"),
+    );
+    await updateJobT(job.id, { pdfPath: personalizedPdfPath });
+
+    const res = await fetch(`${baseUrl}/api/jobs/${job.id}/pdf`);
+    const content = Buffer.from(await res.arrayBuffer()).toString("utf8");
+
+    expect(res.status).toBe(200);
+    expect(content).toContain("Personalized resume");
+  });
+
   it("updates core job detail fields", async () => {
     const { createJob } = await import("@server/repositories/jobs");
     const job = await createJobT({
