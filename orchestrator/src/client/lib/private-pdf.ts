@@ -24,6 +24,17 @@ export async function downloadJobPdf(
   openBlob(await api.getJobPdfBlob(jobId), filename);
 }
 
+export async function openCoverLetterPdf(jobId: string): Promise<void> {
+  openBlob(await api.getCoverLetterPdfBlob(jobId));
+}
+
+export async function downloadCoverLetterPdf(
+  jobId: string,
+  filename: string,
+): Promise<void> {
+  openBlob(await api.getCoverLetterPdfBlob(jobId), filename);
+}
+
 export async function createDesignResumePdfObjectUrl(): Promise<string> {
   const blob = await api.getDesignResumePdfBlob();
   return URL.createObjectURL(blob);

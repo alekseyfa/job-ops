@@ -34,8 +34,10 @@ import {
   updateStageEvent,
 } from "@server/services/applicationTracking";
 import { attachAppliedDuplicateMatches } from "@server/services/applied-duplicate-matching";
+import { generateCoverLetterPdf } from "@server/services/cover-letter-pdf";
 import {
   simulateApplyJob,
+  simulateGenerateCoverLetter,
   simulateGeneratePdf,
   simulateProcessJob,
   simulateRescoreJob,
@@ -1662,6 +1664,85 @@ jobsRouter.get("/:id/pdf", async (req: Request, res: Response) => {
     }
   });
 });
+
+jobsRouter.get(
+  "/:id/cover-letter-pdf",
+  async (req: Request, res: Response) => {
+    const currentJob = await jobsRepo.getJobById(req.params.id);
+    if (!currentJob) {
+      fail(res, notFound("Cover letter PDF not found"));
+      return;
+    }
+
+    const pdfPath =
+      currentJob.coverLetterPdfPath &&
+      existsSync(currentJob.coverLetterPdfPath)
+        ? currentJob.coverLetterPdfPath
+        : null;
+    if (!pdfPath) {
+      fail(res, notFound("Cover letter PDF not found"));
+      return;
+    }
+
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.sendFile(pdfPath, (error) => {
+      if (error) {
+        fail(res, notFound("Cover letter PDF not found"));
+      }
+    });
+  },
+);
+
+/**
+ * POST /api/jobs/:id/generate-cover-letter-pdf - Generate a tailored cover letter PDF
+ */
+jobsRouter.post(
+  "/:id/generate-cover-letter-pdf",
+  async (req: Request, res: Response) => {
+    try {
+      if (isDemoMode()) {
+        const result = await simulateGenerateCoverLetter(req.params.id);
+        if (!result.success) {
+          return fail(
+            res,
+            badRequest(result.error ?? "Failed to generate a cover letter"),
+          );
+        }
+        const job = await jobsRepo.getJobById(req.params.id);
+        if (!job) {
+          return fail(res, notFound("Job not found"));
+        }
+        return okWithMeta(res, job, { simulated: true });
+      }
+
+      const currentJob = await jobsRepo.getJobById(req.params.id);
+      if (!currentJob) {
+        return fail(res, notFound("Job not found"));
+      }
+
+      const forceRaw = req.query.force as string | undefined;
+      const forceRegenerate = forceRaw === "1" || forceRaw === "true";
+
+      const result = await generateCoverLetterPdf(currentJob, {
+        forceRegenerate,
+      });
+      if (!result.success) {
+        return fail(
+          res,
+          badRequest(result.error ?? "Failed to generate a cover letter"),
+        );
+      }
+
+      const job = await jobsRepo.getJobById(req.params.id);
+      if (!job) {
+        return fail(res, notFound("Job not found"));
+      }
+      ok(res, job);
+    } catch (error) {
+      fail(res, toAppError(error));
+    }
+  },
+);
 
 /**
  * POST /api/jobs/:id/summarize - Generate AI summary and suggest projects

@@ -1,5 +1,7 @@
 import { logger } from "@infra/logger";
 import type { Job, ResumeProfile } from "@shared/types";
+import { stripHtmlTags } from "@shared/utils/string";
+import { classifyLlmError } from "./llm-errors";
 import type { JsonSchemaDefinition } from "./llm/types";
 import { createConfiguredLlmService, resolveLlmModel } from "./modelSelection";
 import {
@@ -9,6 +11,22 @@ import {
 import { getWritingStyle } from "./writing-style";
 
 const coverLetterLogger = logger.child({ module: "cover-letter" });
+
+// Cap mirrors scorer.ts/summary.ts — anything past 8 KB is almost always
+// boilerplate and costs tokens without informing the letter.
+const JOB_DESCRIPTION_MAX_CHARS = 8000;
+const TRUNCATION_MARKER = "\n\n... [description truncated]";
+
+function truncateJobDescription(raw: string): string {
+  if (raw.length <= JOB_DESCRIPTION_MAX_CHARS) return raw;
+  const head = raw.slice(0, JOB_DESCRIPTION_MAX_CHARS);
+  const lastBoundary = head.lastIndexOf(" ");
+  const safeHead =
+    lastBoundary > JOB_DESCRIPTION_MAX_CHARS * 0.9
+      ? head.slice(0, lastBoundary)
+      : head;
+  return `${safeHead}${TRUNCATION_MARKER}`;
+}
 
 const COVER_LETTER_SCHEMA: JsonSchemaDefinition = {
   name: "cover_letter",
@@ -72,10 +90,18 @@ export async function generateCoverLetter(
   });
 
   if (!result.success) {
+    const kind = classifyLlmError(result.error);
     coverLetterLogger.warn("Cover letter LLM call failed", {
       error: result.error,
+      kind,
     });
-    return { success: false, error: result.error };
+    return {
+      success: false,
+      error:
+        kind === "config"
+          ? `LLM not configured: ${result.error}. Check Settings → Integrations.`
+          : result.error,
+    };
   }
 
   const text = (result.data.coverLetter ?? "").trim();
@@ -96,26 +122,33 @@ function buildPrompt(args: {
 }): string {
   const { job, profile, outputLanguage, tone, formality, avoidWords } = args;
 
+  // Resume rich-text fields (summary/description) come from the profile's
+  // WYSIWYG editor and arrive as HTML. Strip tags before they reach the
+  // prompt — see scorer.ts's sanitizeProfileForPrompt for the same fix
+  // after raw HTML made the scoring LLM see the resume as unreadable.
+  const stripMaybeHtml = (value: string | undefined): string | undefined =>
+    typeof value === "string" ? stripHtmlTags(value) : value;
+
   const profileSummary = {
     name: profile.basics?.name,
     headline: profile.basics?.label,
-    summary: profile.basics?.summary,
+    summary: stripMaybeHtml(profile.basics?.summary),
     skills:
       profile.sections?.skills?.items?.map((s) => ({
         name: s.name,
         keywords: s.keywords,
       })) ?? [],
     projects:
-      profile.sections?.projects?.items?.map((p) => ({
+      profile.sections?.projects?.items?.slice(0, 6).map((p) => ({
         name: p.name,
-        description: p.description,
+        description: stripMaybeHtml(p.description),
         keywords: p.keywords,
       })) ?? [],
     experience:
-      profile.sections?.experience?.items?.map((e) => ({
+      profile.sections?.experience?.items?.slice(0, 5).map((e) => ({
         company: e.company,
         position: e.position,
-        summary: e.summary,
+        summary: stripMaybeHtml(e.summary),
       })) ?? [],
   };
 
@@ -136,7 +169,7 @@ function buildPrompt(args: {
     "",
     "Job description:",
     "---",
-    job.jobDescription ?? "",
+    truncateJobDescription(job.jobDescription ?? ""),
     "---",
     "",
     `Company: ${job.employer}`,

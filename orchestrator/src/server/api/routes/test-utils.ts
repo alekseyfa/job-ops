@@ -64,6 +64,10 @@ vi.mock("@server/services/manualJob", () => ({
   inferManualJobDetails: vi.fn(),
 }));
 
+vi.mock("@server/services/cover-letter-pdf", () => ({
+  generateCoverLetterPdf: vi.fn().mockResolvedValue({ success: true }),
+}));
+
 vi.mock("@server/services/scorer", () => ({
   scoreJobSuitability: vi.fn(),
 }));

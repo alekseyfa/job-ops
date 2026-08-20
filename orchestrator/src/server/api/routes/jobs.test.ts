@@ -750,6 +750,110 @@ describe.sequential("Jobs API routes", () => {
     expect(content).toContain("Personalized resume");
   });
 
+  it("returns 404 for GET cover-letter-pdf when no cover letter has been generated", async () => {
+    const job = await createJobT({
+      source: "manual",
+      title: "No Cover Letter Role",
+      employer: "Acme",
+      jobUrl: "https://example.com/job/no-cover-letter",
+      jobDescription: "Cover letter coverage",
+    });
+
+    const res = await fetch(`${baseUrl}/api/jobs/${job.id}/cover-letter-pdf`);
+
+    expect(res.status).toBe(404);
+  });
+
+  it("serves the personalized cover letter PDF path recorded in the DB", async () => {
+    const job = await createJobT({
+      source: "manual",
+      title: "Cover Letter Role",
+      employer: "Acme",
+      jobUrl: "https://example.com/job/cover-letter-role",
+      jobDescription: "Cover letter coverage",
+    });
+
+    const coverLetterPdfPath = join(
+      tempDir,
+      "pdfs",
+      "tenant_default",
+      `Jane_Doe_Acme_${job.id.slice(0, 8)}_CoverLetter.pdf`,
+    );
+    await mkdir(dirname(coverLetterPdfPath), { recursive: true });
+    await writeFile(
+      coverLetterPdfPath,
+      Buffer.from("%PDF-1.7\nPersonalized cover letter\n"),
+    );
+    await updateJobT(job.id, { coverLetterPdfPath });
+
+    const res = await fetch(`${baseUrl}/api/jobs/${job.id}/cover-letter-pdf`);
+    const content = Buffer.from(await res.arrayBuffer()).toString("utf8");
+
+    expect(res.status).toBe(200);
+    expect(content).toContain("Personalized cover letter");
+  });
+
+  it("generates a cover letter PDF and returns the updated job", async () => {
+    const { generateCoverLetterPdf } = await import(
+      "@server/services/cover-letter-pdf"
+    );
+    const job = await createJobT({
+      source: "manual",
+      title: "Generate Cover Letter Role",
+      employer: "Acme",
+      jobUrl: "https://example.com/job/generate-cover-letter",
+      jobDescription: "Cover letter coverage",
+    });
+
+    vi.mocked(generateCoverLetterPdf).mockResolvedValueOnce({
+      success: true,
+      pdfPath: "/tmp/fake-cover-letter.pdf",
+      text: "A generated cover letter.",
+    });
+
+    const res = await fetch(
+      `${baseUrl}/api/jobs/${job.id}/generate-cover-letter-pdf`,
+      { method: "POST" },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.data.id).toBe(job.id);
+    expect(vi.mocked(generateCoverLetterPdf)).toHaveBeenCalledWith(
+      expect.objectContaining({ id: job.id }),
+      { forceRegenerate: false },
+    );
+  });
+
+  it("returns an error when cover letter generation fails", async () => {
+    const { generateCoverLetterPdf } = await import(
+      "@server/services/cover-letter-pdf"
+    );
+    const job = await createJobT({
+      source: "manual",
+      title: "Cover Letter Failure Role",
+      employer: "Acme",
+      jobUrl: "https://example.com/job/cover-letter-failure",
+      jobDescription: "Cover letter coverage",
+    });
+
+    vi.mocked(generateCoverLetterPdf).mockResolvedValueOnce({
+      success: false,
+      error: "Job has no description to generate a cover letter from",
+    });
+
+    const res = await fetch(
+      `${baseUrl}/api/jobs/${job.id}/generate-cover-letter-pdf`,
+      { method: "POST" },
+    );
+    const body = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(body.ok).toBe(false);
+    expect(body.error.message).toMatch(/cover letter/i);
+  });
+
   it("updates core job detail fields", async () => {
     const { createJob } = await import("@server/repositories/jobs");
     const job = await createJobT({

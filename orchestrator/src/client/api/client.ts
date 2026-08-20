@@ -818,6 +818,10 @@ export async function getJobPdfBlob(id: string): Promise<Blob> {
   return fetchBlobApi(`/jobs/${encodeURIComponent(id)}/pdf`);
 }
 
+export async function getCoverLetterPdfBlob(id: string): Promise<Blob> {
+  return fetchBlobApi(`/jobs/${encodeURIComponent(id)}/cover-letter-pdf`);
+}
+
 export async function getTracerAnalytics(options?: {
   jobId?: string;
   from?: number;
@@ -1269,6 +1273,16 @@ export async function summarizeJob(
 
 export async function generateJobPdf(id: string): Promise<Job> {
   return fetchApi<Job>(`/jobs/${id}/generate-pdf`, {
+    method: "POST",
+  });
+}
+
+export async function generateCoverLetterPdf(
+  id: string,
+  options?: { forceRegenerate?: boolean },
+): Promise<Job> {
+  const query = options?.forceRegenerate ? "?force=1" : "";
+  return fetchApi<Job>(`/jobs/${id}/generate-cover-letter-pdf${query}`, {
     method: "POST",
   });
 }

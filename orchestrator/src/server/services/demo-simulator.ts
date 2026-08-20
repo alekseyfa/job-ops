@@ -42,6 +42,15 @@ function samplePdfPath(job: Job): string {
   return `/pdfs/demo-${safeId || "sample"}.pdf`;
 }
 
+function sampleCoverLetterPdfPath(job: Job): string {
+  const safeId = job.id.replace(/[^a-zA-Z0-9-_]/g, "");
+  return `/pdfs/demo-cover-letter-${safeId || "sample"}.pdf`;
+}
+
+function sampleCoverLetterText(job: Job): string {
+  return `Demo cover letter for ${job.title} at ${job.employer}. This text is simulated in demo mode and does not call a live LLM provider.`;
+}
+
 async function ensureJob(jobId: string): Promise<Job> {
   const job = await jobsRepo.getJobById(jobId);
   if (!job) throw new Error("Job not found");
@@ -133,6 +142,17 @@ export async function simulateGeneratePdf(
   await jobsRepo.updateJob(job.id, {
     status: "ready",
     pdfPath: samplePdfPath(job),
+  });
+  return { success: true };
+}
+
+export async function simulateGenerateCoverLetter(
+  jobId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const job = await ensureJob(jobId);
+  await jobsRepo.updateJob(job.id, {
+    coverLetterText: sampleCoverLetterText(job),
+    coverLetterPdfPath: sampleCoverLetterPdfPath(job),
   });
   return { success: true };
 }
