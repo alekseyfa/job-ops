@@ -112,6 +112,32 @@ describe("LogEventModal", () => {
     expect(onLog).not.toHaveBeenCalled();
   });
 
+  it("preselects the stage from initialStage when opening for a new event", async () => {
+    const onLog = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <LogEventModal
+        isOpen
+        onClose={vi.fn()}
+        onLog={onLog}
+        initialStage="rejected"
+      />,
+    );
+
+    const stageSelect = screen.getAllByTestId("select")[0];
+    expect(stageSelect).toHaveValue("rejected");
+    expect(screen.getByText("Reason")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /log event/i }));
+
+    await waitFor(() =>
+      expect(onLog).toHaveBeenCalledWith(
+        expect.objectContaining({ stage: "rejected" }),
+        undefined,
+      ),
+    );
+  });
+
   it("keeps the modal scrollable on small screens", () => {
     render(<LogEventModal isOpen onClose={vi.fn()} onLog={vi.fn()} />);
 

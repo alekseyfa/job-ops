@@ -41,6 +41,8 @@ interface LogEventModalProps {
   onClose: () => void;
   onLog: (values: LogEventFormValues, eventId?: string) => Promise<void>;
   editingEvent?: StageEvent | null;
+  /** Stage to preselect when opening for a new event (ignored while editing). */
+  initialStage?: string;
 }
 
 const STAGE_OPTIONS = [
@@ -71,6 +73,7 @@ export const LogEventModal: React.FC<LogEventModalProps> = ({
   onClose,
   onLog,
   editingEvent,
+  initialStage,
 }) => {
   const {
     register,
@@ -106,15 +109,18 @@ export const LogEventModal: React.FC<LogEventModalProps> = ({
             : undefined,
         });
       } else {
+        const stage = initialStage ?? "no_change";
+        const title =
+          STAGE_OPTIONS.find((o) => o.value === stage)?.label ?? "Update";
         reset({
-          stage: "no_change",
-          title: "Update",
+          stage,
+          title,
           date: toDateTimeLocal(new Date()),
           notes: "",
         });
       }
     }
-  }, [isOpen, reset, editingEvent]);
+  }, [isOpen, reset, editingEvent, initialStage]);
 
   React.useEffect(() => {
     // Only auto-update title if we're not editing or if the title is empty/default

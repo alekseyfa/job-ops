@@ -11,6 +11,7 @@ import { OpenJobListingButton } from "@client/components/OpenJobListingButton";
 import { TailoringWorkspace } from "@client/components/tailoring/TailoringWorkspace";
 import {
   useMarkAsAppliedMutation,
+  useMarkAsDeclinedMutation,
   useSkipJobMutation,
 } from "@client/hooks/queries/useJobMutations";
 import { useProfile } from "@client/hooks/useProfile";
@@ -18,10 +19,16 @@ import { useRescoreJob } from "@client/hooks/useRescoreJob";
 import { useSettings } from "@client/hooks/useSettings";
 import { uploadJobPdfFromFile } from "@client/lib/job-pdf-upload";
 import { getRenderableJobDescription } from "@client/lib/jobDescription";
-import { downloadJobPdf, openJobPdf } from "@client/lib/private-pdf";
+import {
+  downloadCoverLetterPdf,
+  downloadJobPdf,
+  openCoverLetterPdf,
+  openJobPdf,
+} from "@client/lib/private-pdf";
 import type {
   Job,
   JobListItem,
+  JobOutcome,
   ResumeProjectCatalogItem,
 } from "@shared/types.js";
 import {
@@ -33,6 +40,7 @@ import {
   FileText,
   FolderKanban,
   Loader2,
+  Mail,
   MoreHorizontal,
   RefreshCcw,
   Save,
@@ -157,7 +165,33 @@ const statusTone: Record<
   },
 };
 
+/**
+ * A declined/withdrawn/hired job keeps JobStatus "in_progress" — outcome
+ * carries the terminal state. Override the status-keyed tone whenever it's set.
+ */
+const outcomeTone: Partial<Record<JobOutcome, (typeof statusTone)["applied"]>> =
+  {
+    offer_accepted: {
+      shell: "border-emerald-500/30 bg-emerald-500/5",
+      eyebrow: "text-emerald-300",
+      icon: "bg-emerald-500/70",
+    },
+    rejected: {
+      shell: "border-rose-500/30 bg-rose-500/5",
+      eyebrow: "text-rose-300",
+      icon: "bg-rose-500/70",
+    },
+    withdrawn: {
+      shell: "border-border/45 bg-muted/10",
+      eyebrow: "text-muted-foreground",
+      icon: "bg-muted-foreground/70",
+    },
+  };
+
 const getPrimaryAction = (job: Job): string => {
+  if (job.outcome === "rejected") return "Declined";
+  if (job.outcome === "withdrawn") return "Withdrawn";
+  if (job.outcome === "offer_accepted") return "Hired";
   if (job.status === "processing") return "Processing";
   if (job.status === "ready") return "Mark Applied";
   if (job.status === "discovered") return "Start Tailoring";
@@ -178,6 +212,15 @@ const getDefaultInspectorTab = (
 };
 
 const getJobStageNote = (job: Job): string => {
+  if (job.outcome === "rejected") {
+    return "This application was declined. See the timeline for the stage reached and reason.";
+  }
+  if (job.outcome === "withdrawn") {
+    return "You withdrew this application.";
+  }
+  if (job.outcome === "offer_accepted") {
+    return "You accepted an offer for this role.";
+  }
   if (job.status === "ready") {
     return "Ready to apply. Review the brief, use the application kit, then mark it applied.";
   }
@@ -298,10 +341,13 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
   const [isEditDetailsOpen, setIsEditDetailsOpen] = useState(false);
   const [catalog, setCatalog] = useState<ResumeProjectCatalogItem[]>([]);
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [isGeneratingCoverLetter, setIsGeneratingCoverLetter] =
+    useState(false);
   const uploadPdfInputRef = useRef<HTMLInputElement | null>(null);
   const previousSelectionKeyRef = useRef<string | null>(null);
   const markAsAppliedMutation = useMarkAsAppliedMutation();
   const skipJobMutation = useSkipJobMutation();
+  const markAsDeclinedMutation = useMarkAsDeclinedMutation();
   const { isRescoring, rescoreJob } = useRescoreJob(onJobUpdated);
   const { personName } = useProfile();
   const { renderMarkdownInJobDescriptions } = useSettings();
@@ -312,6 +358,9 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
   const selectedPdfFilename = selectedJob
     ? `${safeFilenamePart(personName || "Unknown")}_${safeFilenamePart(selectedJob.employer || "Unknown")}.pdf`
     : "resume.pdf";
+  const selectedCoverLetterFilename = selectedJob
+    ? `${safeFilenamePart(personName || "Unknown")}_${safeFilenamePart(selectedJob.employer || "Unknown")}_CoverLetter.pdf`
+    : "cover-letter.pdf";
   const description = useMemo(
     () => getRenderableJobDescription(selectedJob?.jobDescription),
     [selectedJob?.jobDescription],
@@ -515,6 +564,25 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
     }
   }, [handleJobMoved, onJobUpdated, selectedJob, skipJobMutation]);
 
+  const handleMarkDeclined = useCallback(async () => {
+    if (!selectedJob) return;
+    try {
+      await markAsDeclinedMutation.mutateAsync(selectedJob.id);
+      trackProductEvent("jobs_job_action_completed", {
+        action: "mark_declined",
+        result: "success",
+        from_status: selectedJob.status,
+        to_status: "in_progress",
+      });
+      toast.message("Marked as declined");
+      await onJobUpdated();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to mark as declined";
+      toast.error(message);
+    }
+  }, [markAsDeclinedMutation, onJobUpdated, selectedJob]);
+
   const handleOpenPdf = useCallback(() => {
     if (!selectedJob) return;
     void openJobPdf(selectedJob.id).catch((error) => {
@@ -532,6 +600,58 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
       );
     });
   }, [selectedJob, selectedPdfFilename]);
+
+  const handleOpenCoverLetter = useCallback(() => {
+    if (!selectedJob) return;
+    void openCoverLetterPdf(selectedJob.id).catch((error) => {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not open cover letter",
+      );
+    });
+  }, [selectedJob]);
+
+  const handleDownloadCoverLetter = useCallback(() => {
+    if (!selectedJob) return;
+    void downloadCoverLetterPdf(selectedJob.id, selectedCoverLetterFilename).catch(
+      (error) => {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not download cover letter",
+        );
+      },
+    );
+  }, [selectedJob, selectedCoverLetterFilename]);
+
+  const handleGenerateCoverLetter = useCallback(async () => {
+    if (!selectedJob) return;
+    const wasRegenerate = Boolean(selectedJob.coverLetterPdfPath);
+    try {
+      setIsGeneratingCoverLetter(true);
+      await api.generateCoverLetterPdf(selectedJob.id, {
+        forceRegenerate: wasRegenerate,
+      });
+      toast.success(
+        wasRegenerate ? "Cover letter regenerated" : "Cover letter generated",
+      );
+      trackProductEvent("jobs_job_action_completed", {
+        action: "generate_cover_letter",
+        result: "success",
+        from_status: selectedJob.status,
+      });
+      await onJobUpdated();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to generate cover letter";
+      toast.error(message);
+    } finally {
+      setIsGeneratingCoverLetter(false);
+    }
+  }, [onJobUpdated, selectedJob]);
 
   const handleUploadPdf = useCallback(
     async (file: File) => {
@@ -578,7 +698,13 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
     selectedJob.status === "processing";
   const canGenerate = ["discovered", "ready"].includes(selectedJob.status);
   const canSkip = ["discovered", "ready"].includes(selectedJob.status);
-  const tone = statusTone[selectedJob.status];
+  const canDecline = ["applied", "in_progress"].includes(selectedJob.status);
+  const canCoverLetter = ["ready", "applied", "in_progress"].includes(
+    selectedJob.status,
+  );
+  const tone =
+    (selectedJob.outcome && outcomeTone[selectedJob.outcome]) ||
+    statusTone[selectedJob.status];
 
   return (
     <div className="flex min-h-[520px] flex-col gap-4">
@@ -713,6 +839,41 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                       </DropdownMenuItem>
                     </>
                   )}
+                  {canCoverLetter && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => void handleGenerateCoverLetter()}
+                        disabled={isGeneratingCoverLetter}
+                      >
+                        <RefreshCcw
+                          className={cn(
+                            "mr-2 h-4 w-4",
+                            isGeneratingCoverLetter && "animate-spin",
+                          )}
+                        />
+                        {isGeneratingCoverLetter
+                          ? "Generating cover letter..."
+                          : selectedJob.coverLetterPdfPath
+                            ? "Regenerate cover letter"
+                            : "Generate cover letter"}
+                      </DropdownMenuItem>
+                      {selectedJob.coverLetterPdfPath && (
+                        <>
+                          <DropdownMenuItem onSelect={handleOpenCoverLetter}>
+                            <ExternalLink className="mr-2 h-4 w-4" />
+                            View cover letter
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={handleDownloadCoverLetter}
+                          >
+                            <Download className="mr-2 h-4 w-4" />
+                            Download cover letter
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </>
+                  )}
                   {canSkip && (
                     <>
                       <DropdownMenuSeparator />
@@ -722,6 +883,19 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                       >
                         <XCircle className="mr-2 h-4 w-4" />
                         Skip job
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  {canDecline && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => void handleMarkDeclined()}
+                        disabled={markAsDeclinedMutation.isPending}
+                        className="text-destructive focus:text-destructive"
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Mark as declined
                       </DropdownMenuItem>
                     </>
                   )}
@@ -961,6 +1135,48 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                     : "Generate PDF"}
                 </Button>
               )}
+              {canCoverLetter && (
+                <>
+                  {/* One button that does the right thing for wherever the
+                      cover letter is in its lifecycle: generate it if it
+                      doesn't exist yet, download it once it does. Regenerate
+                      stays one click away in the "More actions" menu — the
+                      common path (get the letter) stays a single visible
+                      button, not three, right next to Download/View PDF. */}
+                  <Button
+                    variant="outline"
+                    className="h-10 w-full gap-1.5 px-2 text-xs"
+                    onClick={() => {
+                      if (selectedJob.coverLetterPdfPath) {
+                        handleDownloadCoverLetter();
+                      } else {
+                        void handleGenerateCoverLetter();
+                      }
+                    }}
+                    disabled={isGeneratingCoverLetter}
+                  >
+                    {isGeneratingCoverLetter ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Mail className="h-3.5 w-3.5" />
+                    )}
+                    {isGeneratingCoverLetter
+                      ? "Generating..."
+                      : selectedJob.coverLetterPdfPath
+                        ? "Download Cover Letter"
+                        : "Generate Cover Letter"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-10 w-full gap-1.5 px-2 text-xs"
+                    onClick={handleOpenCoverLetter}
+                    disabled={!selectedJob.coverLetterPdfPath}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    View Cover Letter
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -1003,6 +1219,10 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                 ready={Boolean(selectedJob.tailoredSkills)}
               />
               <KitStatus label="PDF" ready={Boolean(selectedJob.pdfPath)} />
+              <KitStatus
+                label="Cover letter"
+                ready={Boolean(selectedJob.coverLetterPdfPath)}
+              />
             </div>
           </div>
         </TabsContent>

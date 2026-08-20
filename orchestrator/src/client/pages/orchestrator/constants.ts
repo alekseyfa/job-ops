@@ -3,7 +3,7 @@ import {
   EXTRACTOR_SOURCE_METADATA,
   PIPELINE_EXTRACTOR_SOURCE_IDS,
 } from "@shared/extractors";
-import type { JobSource, JobStatus } from "@shared/types";
+import type { JobOutcome, JobSource, JobStatus } from "@shared/types";
 
 export const DEFAULT_PIPELINE_SOURCES: JobSource[] = [
   "gradcracker",
@@ -72,6 +72,55 @@ export const defaultStatusToken = {
   badge: "border-muted-foreground/20 bg-muted/30 text-muted-foreground",
   dot: "bg-muted-foreground",
 };
+
+/**
+ * Jobs that reach an outcome (e.g. rejected) stay JobStatus "in_progress" —
+ * closedAt/outcome carry the terminal state, not status. statusTokens alone
+ * can't show that, so these override it wherever a job's outcome is set.
+ */
+export const outcomeTokens: Record<
+  JobOutcome,
+  { label: string; badge: string; dot: string }
+> = {
+  offer_accepted: {
+    label: "Hired",
+    badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    dot: "bg-emerald-400",
+  },
+  offer_declined: {
+    label: "Declined Offer",
+    badge: "border-muted-foreground/20 bg-muted/30 text-muted-foreground",
+    dot: "bg-muted-foreground",
+  },
+  rejected: {
+    label: "Declined",
+    badge: "border-rose-500/30 bg-rose-500/10 text-rose-200",
+    dot: "bg-rose-400",
+  },
+  withdrawn: {
+    label: "Withdrawn",
+    badge: "border-muted-foreground/20 bg-muted/30 text-muted-foreground",
+    dot: "bg-muted-foreground",
+  },
+  no_response: {
+    label: "No Response",
+    badge: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+    dot: "bg-amber-400",
+  },
+  ghosted: {
+    label: "Ghosted",
+    badge: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+    dot: "bg-amber-400",
+  },
+};
+
+export const getDisplayStatusToken = (job: {
+  status: JobStatus;
+  outcome?: JobOutcome | null;
+}): { label: string; badge: string; dot: string } =>
+  (job.outcome && outcomeTokens[job.outcome]) ||
+  statusTokens[job.status] ||
+  defaultStatusToken;
 
 export const appliedDuplicateIndicator = {
   label: "Previously Applied",

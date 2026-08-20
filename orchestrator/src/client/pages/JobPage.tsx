@@ -19,6 +19,7 @@ import {
   Edit2,
   ExternalLink,
   FileText,
+  Mail,
   MoreHorizontal,
   PlusCircle,
   RefreshCcw,
@@ -37,6 +38,7 @@ import {
   useCheckSponsorMutation,
   useCreateJobNoteMutation,
   useDeleteJobNoteMutation,
+  useGenerateCoverLetterMutation,
   useGenerateJobPdfMutation,
   useMarkAsAppliedMutation,
   useRescoreJobMutation,
@@ -51,7 +53,7 @@ import {
   markdownToEditorHtml as markdownToTipTapHtml,
   editorHtmlToMarkdown as tipTapHtmlToMarkdown,
 } from "@/client/lib/jobNoteContent";
-import { openJobPdf } from "@/client/lib/private-pdf";
+import { openCoverLetterPdf, openJobPdf } from "@/client/lib/private-pdf";
 import { queryKeys } from "@/client/lib/queryKeys";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -526,6 +528,9 @@ export const JobPage: React.FC = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [isLogModalOpen, setIsLogModalOpen] = React.useState(false);
+  const [presetStage, setPresetStage] = React.useState<string | undefined>(
+    undefined,
+  );
   const [isDeleteModalOpen, setIsDeleteModalOpen] = React.useState(false);
   const [isEditDetailsOpen, setIsEditDetailsOpen] = React.useState(false);
   const [isUploadingPdf, setIsUploadingPdf] = React.useState(false);
@@ -574,6 +579,7 @@ export const JobPage: React.FC = () => {
   const skipJobMutation = useSkipJobMutation();
   const rescoreJobMutation = useRescoreJobMutation();
   const generatePdfMutation = useGenerateJobPdfMutation();
+  const generateCoverLetterMutation = useGenerateCoverLetterMutation();
   const checkSponsorMutation = useCheckSponsorMutation();
 
   const job = jobQuery.data ?? null;
@@ -599,10 +605,6 @@ export const JobPage: React.FC = () => {
     eventId?: string,
   ) => {
     if (!job) return;
-    if (job.status !== "in_progress") {
-      toast.error("Move this job to In Progress to track stages.");
-      return;
-    }
 
     let toStage: ApplicationStage | "no_change" = values.stage as
       | ApplicationStage
@@ -704,6 +706,7 @@ export const JobPage: React.FC = () => {
 
   const handleEditEvent = (event: StageEvent) => {
     setEditingEvent(event);
+    setPresetStage(undefined);
     setIsLogModalOpen(true);
   };
 
@@ -768,6 +771,20 @@ export const JobPage: React.FC = () => {
     });
   };
 
+  const handleGenerateCoverLetter = async () => {
+    await runAction("generate-cover-letter", async () => {
+      if (!job) return;
+      const wasRegenerate = Boolean(job.coverLetterPdfPath);
+      await generateCoverLetterMutation.mutateAsync({
+        id: job.id,
+        forceRegenerate: wasRegenerate,
+      });
+      toast.success(
+        wasRegenerate ? "Cover letter regenerated" : "Cover letter generated",
+      );
+    });
+  };
+
   const handleCheckSponsor = async () => {
     await runAction("check-sponsor", async () => {
       if (!job) return;
@@ -817,7 +834,8 @@ export const JobPage: React.FC = () => {
         : null))
     : null;
   const isClosedStage = currentStage === "closed";
-  const canTrackStages = job?.status === "in_progress";
+  const canTrackStages =
+    job?.status === "applied" || job?.status === "in_progress";
   const canLogEvents = canTrackStages && !isClosedStage;
   const jobLink = job ? job.applicationLink || job.jobUrl : null;
   const isBusy = activeAction !== null;
@@ -929,16 +947,34 @@ export const JobPage: React.FC = () => {
                 </Button>
               )}
 
-              {isInProgress && (
-                <Button
-                  size="sm"
-                  className="h-9 border border-orange-400/50 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30"
-                  onClick={() => setIsLogModalOpen(true)}
-                  disabled={!canLogEvents || isBusy}
-                >
-                  <PlusCircle className="mr-2 h-4 w-4" />
-                  Log Event
-                </Button>
+              {canLogEvents && (
+                <>
+                  <Button
+                    size="sm"
+                    className="h-9 border border-orange-400/50 bg-orange-500/20 text-orange-100 hover:bg-orange-500/30"
+                    onClick={() => {
+                      setPresetStage(undefined);
+                      setIsLogModalOpen(true);
+                    }}
+                    disabled={isBusy}
+                  >
+                    <PlusCircle className="mr-2 h-4 w-4" />
+                    Log Event
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9 border-destructive/40 bg-destructive/10 text-destructive hover:bg-destructive/20"
+                    onClick={() => {
+                      setPresetStage("rejected");
+                      setIsLogModalOpen(true);
+                    }}
+                    disabled={isBusy}
+                  >
+                    <XCircle className="mr-1.5 h-3.5 w-3.5" />
+                    Mark as Declined
+                  </Button>
+                </>
               )}
             </div>
 
@@ -1002,6 +1038,42 @@ export const JobPage: React.FC = () => {
                   <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
                   Regenerate PDF
                 </Button>
+              )}
+
+              {(isReady || isApplied || isInProgress) && (
+                <>
+                  {job?.coverLetterPdfPath && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-9 border-border/60 bg-background/30"
+                      onClick={() => {
+                        void openCoverLetterPdf(job.id).catch((error) => {
+                          toast.error(
+                            error instanceof Error
+                              ? error.message
+                              : "Could not open cover letter",
+                          );
+                        });
+                      }}
+                    >
+                      <Mail className="mr-1.5 h-3.5 w-3.5" />
+                      View Cover Letter
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9 border-border/60 bg-background/30"
+                    onClick={() => void handleGenerateCoverLetter()}
+                    disabled={isBusy}
+                  >
+                    <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
+                    {job?.coverLetterPdfPath
+                      ? "Regenerate Cover Letter"
+                      : "Generate Cover Letter"}
+                  </Button>
+                </>
               )}
 
               <DropdownMenu>
@@ -1089,7 +1161,7 @@ export const JobPage: React.FC = () => {
           <CardContent>
             {!canTrackStages && (
               <div className="mb-4 rounded-md border border-dashed border-border/60 p-3 text-sm text-muted-foreground">
-                Move this job to In Progress to track application stages.
+                Mark this job applied to start tracking application stages.
               </div>
             )}
             {canTrackStages && isClosedStage && (
@@ -1196,9 +1268,11 @@ export const JobPage: React.FC = () => {
         onClose={() => {
           setIsLogModalOpen(false);
           setEditingEvent(null);
+          setPresetStage(undefined);
         }}
         onLog={handleLogEvent}
         editingEvent={editingEvent}
+        initialStage={presetStage}
       />
 
       <ConfirmDelete

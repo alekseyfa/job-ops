@@ -85,6 +85,26 @@ export function useSkipJobMutation() {
   });
 }
 
+export function useMarkAsDeclinedMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.transitionJobStage(id, {
+        toStage: "closed",
+        outcome: "rejected",
+        metadata: {
+          actor: "user",
+          eventType: "status_update",
+          eventLabel: "Rejected",
+          reasonCode: "job_detail_panel_manual",
+        },
+      }),
+    onSuccess: async (_data, id) => {
+      await invalidateJobData(queryClient, id);
+    },
+  });
+}
+
 export function useRescoreJobMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -100,6 +120,22 @@ export function useGenerateJobPdfMutation() {
   return useMutation({
     mutationFn: (id: string) => api.generateJobPdf(id),
     onSuccess: async (_data, id) => {
+      await invalidateJobData(queryClient, id);
+    },
+  });
+}
+
+export function useGenerateCoverLetterMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      forceRegenerate,
+    }: {
+      id: string;
+      forceRegenerate?: boolean;
+    }) => api.generateCoverLetterPdf(id, { forceRegenerate }),
+    onSuccess: async (_data, { id }) => {
       await invalidateJobData(queryClient, id);
     },
   });

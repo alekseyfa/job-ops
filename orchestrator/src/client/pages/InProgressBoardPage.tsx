@@ -2,6 +2,7 @@ import { PageHeader, PageMain } from "@client/components/layout";
 import {
   APPLICATION_STAGES,
   type ApplicationStage,
+  type JobOutcome,
   type JobListItem,
   STAGE_LABELS,
   type StageEvent,
@@ -24,6 +25,10 @@ import {
 } from "@/components/ui/select";
 import { cn, formatTimestamp } from "@/lib/utils";
 import * as api from "../api";
+import {
+  type LogEventFormValues,
+  LogEventModal,
+} from "../components/LogEventModal";
 
 type BoardCard = {
   job: JobListItem;
@@ -92,6 +97,10 @@ export const InProgressBoardPage: React.FC = () => {
   const [sortMode, setSortMode] = React.useState<
     "updated" | "title" | "company"
   >("updated");
+  const [outcomeTarget, setOutcomeTarget] = React.useState<{
+    jobId: string;
+    fromStage: ApplicationStage;
+  } | null>(null);
 
   const boardQuery = useQuery({
     queryKey: queryKeys.jobs.inProgressBoard(),
@@ -182,6 +191,13 @@ export const InProgressBoardPage: React.FC = () => {
         return;
       }
 
+      if (toStage === "closed") {
+        setOutcomeTarget({ jobId: dragging.jobId, fromStage: dragging.fromStage });
+        setDragging(null);
+        setDropTargetStage(null);
+        return;
+      }
+
       const { jobId } = dragging;
       const previousCards =
         queryClient.getQueryData<BoardCard[]>(
@@ -221,6 +237,62 @@ export const InProgressBoardPage: React.FC = () => {
       }
     },
     [dragging, queryClient, transitionMutation],
+  );
+
+  const handleLogOutcome = React.useCallback(
+    async (values: LogEventFormValues) => {
+      if (!outcomeTarget) return;
+      const { jobId, fromStage } = outcomeTarget;
+
+      let toStage: ApplicationStage | "no_change" = values.stage as
+        | ApplicationStage
+        | "no_change";
+      let outcome: JobOutcome | null = null;
+
+      if (values.stage === "rejected") {
+        toStage = "closed";
+        outcome = "rejected";
+      } else if (values.stage === "withdrawn") {
+        toStage = "closed";
+        outcome = "withdrawn";
+      }
+
+      const effectiveStage = toStage === "no_change" ? fromStage : toStage;
+      const occurredAt = values.date
+        ? Math.floor(new Date(values.date).getTime() / 1000)
+        : undefined;
+
+      try {
+        await api.transitionJobStage(jobId, {
+          toStage: effectiveStage,
+          occurredAt,
+          metadata: {
+            note: values.notes?.trim() || undefined,
+            eventLabel: values.title.trim() || undefined,
+            reasonCode:
+              values.reasonCode ||
+              (values.stage === "no_change"
+                ? undefined
+                : "in_progress_board_drag"),
+            actor: "user",
+            eventType: values.stage === "no_change" ? "note" : "status_update",
+            externalUrl: values.salary ? `Salary: ${values.salary}` : undefined,
+          },
+          outcome,
+        });
+        toast.success(`Moved to ${STAGE_LABELS[effectiveStage]}`);
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.jobs.inProgressBoard(),
+        });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Failed to log outcome";
+        toast.error(message);
+      } finally {
+        setOutcomeTarget(null);
+      }
+    },
+    [outcomeTarget, queryClient],
   );
 
   return (
@@ -271,6 +343,7 @@ export const InProgressBoardPage: React.FC = () => {
                 return (
                   <section
                     key={stage}
+                    data-testid={`lane-${stage}`}
                     aria-label={`${STAGE_LABELS[stage]} lane`}
                     onDragOver={(event) => {
                       event.preventDefault();
@@ -377,6 +450,13 @@ export const InProgressBoardPage: React.FC = () => {
           </div>
         )}
       </PageMain>
+
+      <LogEventModal
+        isOpen={outcomeTarget !== null}
+        onClose={() => setOutcomeTarget(null)}
+        onLog={handleLogOutcome}
+        initialStage="rejected"
+      />
     </>
   );
 };

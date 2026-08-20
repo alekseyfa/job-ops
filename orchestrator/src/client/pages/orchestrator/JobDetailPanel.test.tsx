@@ -121,6 +121,7 @@ vi.mock("@client/api", () => ({
   generateJobPdf: vi.fn(),
   markAsApplied: vi.fn(),
   skipJob: vi.fn(),
+  transitionJobStage: vi.fn(),
   getProfile: vi.fn().mockResolvedValue({}),
   getResumeProjectsCatalog: vi.fn().mockResolvedValue([]),
 }));
@@ -354,6 +355,87 @@ describe("JobDetailPanel", () => {
 
     await waitFor(() => expect(api.skipJob).toHaveBeenCalledWith("job-1"));
     expect(onJobUpdated).toHaveBeenCalled();
+  });
+
+  it("marks a job as declined from the menu", async () => {
+    const onJobUpdated = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(api.transitionJobStage).mockResolvedValue(undefined as any);
+
+    await renderJobDetailPanel({
+      activeTab: "all",
+      activeJobs: [],
+      selectedJob: createJob({ status: "applied" }),
+      onSelectJobId: vi.fn(),
+      onJobUpdated,
+    });
+
+    fireEvent.pointerDown(
+      screen.getByRole("button", { name: /more actions/i }),
+    );
+    const declineItem = await screen.findByRole("menuitem", {
+      name: /mark as declined/i,
+    });
+    fireEvent.click(declineItem);
+
+    await waitFor(() =>
+      expect(api.transitionJobStage).toHaveBeenCalledWith(
+        "job-1",
+        expect.objectContaining({ toStage: "closed", outcome: "rejected" }),
+      ),
+    );
+    expect(onJobUpdated).toHaveBeenCalled();
+  });
+
+  it("does not offer Mark as declined for a job that hasn't been applied to yet", async () => {
+    await renderJobDetailPanel({
+      activeTab: "all",
+      activeJobs: [],
+      selectedJob: createJob({ status: "discovered" }),
+      onSelectJobId: vi.fn(),
+      onJobUpdated: vi.fn().mockResolvedValue(undefined),
+    });
+
+    fireEvent.pointerDown(
+      screen.getByRole("button", { name: /more actions/i }),
+    );
+
+    expect(
+      screen.queryByRole("menuitem", { name: /mark as declined/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a declined tone and next-step note once a job has been rejected", async () => {
+    await renderJobDetailPanel({
+      activeTab: "all",
+      activeJobs: [],
+      selectedJob: createJob({ status: "in_progress", outcome: "rejected" }),
+      onSelectJobId: vi.fn(),
+      onJobUpdated: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(
+      screen.getByRole("button", { name: /^declined$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/this application was declined/i),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a withdrawn tone once a job's application has been withdrawn", async () => {
+    await renderJobDetailPanel({
+      activeTab: "all",
+      activeJobs: [],
+      selectedJob: createJob({ status: "in_progress", outcome: "withdrawn" }),
+      onSelectJobId: vi.fn(),
+      onJobUpdated: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(
+      screen.getByRole("button", { name: /^withdrawn$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/you withdrew this application/i),
+    ).toBeInTheDocument();
   });
 
   it("forwards tailoring dirty state to refresh pause callback", async () => {

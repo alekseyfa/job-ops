@@ -1,6 +1,6 @@
 import type { JobListItem } from "@shared/types.js";
 import { cn } from "@/lib/utils";
-import { defaultStatusToken, statusTokens } from "./constants";
+import { getDisplayStatusToken } from "./constants";
 
 interface JobRowContentProps {
   job: JobListItem;
@@ -24,7 +24,7 @@ export const JobRowContent = ({
   className,
 }: JobRowContentProps) => {
   const hasScore = job.suitabilityScore != null;
-  const statusToken = statusTokens[job.status] ?? defaultStatusToken;
+  const statusToken = getDisplayStatusToken(job);
   const suitabilityTone = getSuitabilityScoreTone(job.suitabilityScore ?? 0);
 
   return (

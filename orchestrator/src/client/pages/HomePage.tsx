@@ -4,6 +4,7 @@ import {
   ConversionAnalytics,
   DurationSelector,
   type DurationValue,
+  RejectionInsights,
   ResponseRateBySourceChart,
 } from "@client/components/charts";
 import { PageHeader, PageMain } from "@client/components/layout";
@@ -19,6 +20,8 @@ import { OverviewPipelineRunsSection } from "./overview/OverviewPipelineRunsSect
 type JobWithEvents = {
   id: string;
   source: JobSource;
+  title: string;
+  employer: string;
   datePosted: string | null;
   discoveredAt: string;
   appliedAt: string | null;
@@ -58,6 +61,8 @@ export const HomePage: React.FC = () => {
       const jobSummaries = response.jobs.map((job) => ({
         id: job.id,
         source: job.source,
+        title: job.title,
+        employer: job.employer,
         datePosted: job.datePosted,
         discoveredAt: job.discoveredAt,
         appliedAt: job.appliedAt,
@@ -156,6 +161,8 @@ export const HomePage: React.FC = () => {
           error={error}
           daysToShow={duration}
         />
+
+        <RejectionInsights jobs={jobsWithEvents} error={error} />
 
         <ResponseRateBySourceChart jobs={jobsWithEvents} error={error} />
       </PageMain>

@@ -6,6 +6,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { editorHtmlToMarkdown } from "@/client/lib/jobNoteContent";
+import * as privatePdf from "@/client/lib/private-pdf";
 import * as api from "../api";
 import { renderWithQueryClient } from "../test/renderWithQueryClient";
 import { JobPage } from "./JobPage";
@@ -86,7 +87,13 @@ vi.mock("../api", () => ({
   skipJob: vi.fn(),
   rescoreJob: vi.fn(),
   generateJobPdf: vi.fn(),
+  generateCoverLetterPdf: vi.fn(),
   checkSponsor: vi.fn(),
+}));
+
+vi.mock("@/client/lib/private-pdf", () => ({
+  openJobPdf: vi.fn().mockResolvedValue(undefined),
+  openCoverLetterPdf: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../components/JobHeader", () => ({
@@ -104,7 +111,40 @@ vi.mock("../components/JobDetailsEditDrawer", () => ({
 }));
 
 vi.mock("../components/LogEventModal", () => ({
-  LogEventModal: () => null,
+  LogEventModal: ({
+    isOpen,
+    initialStage,
+    onLog,
+  }: {
+    isOpen: boolean;
+    initialStage?: string;
+    onLog: (values: {
+      stage: string;
+      title: string;
+      date: string;
+      reasonCode?: string;
+    }) => void;
+  }) =>
+    isOpen ? (
+      <div
+        data-testid="log-event-modal"
+        data-initial-stage={initialStage ?? ""}
+      >
+        <button
+          type="button"
+          onClick={() =>
+            onLog({
+              stage: initialStage ?? "no_change",
+              title: initialStage === "rejected" ? "Rejected" : "Update",
+              date: "2026-01-25T10:00",
+              reasonCode: "Skills",
+            })
+          }
+        >
+          Submit log event
+        </button>
+      </div>
+    ) : null,
 }));
 
 vi.mock("../components/ConfirmDelete", () => ({
@@ -364,5 +404,140 @@ describe("JobPage notes", () => {
     await waitFor(() =>
       expect(screen.queryByText("Why this company")).toBeNull(),
     );
+  });
+});
+
+describe("JobPage stage actions", () => {
+  it("lets an applied (not yet in_progress) job log events and decline directly", async () => {
+    vi.mocked(api.getJob).mockResolvedValue(
+      createJob({ status: "applied" }) as Job,
+    );
+
+    renderJobPage();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("job-header")).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole("button", { name: /^log event$/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /mark as declined/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the log event modal preset to Rejected from Mark as Declined", async () => {
+    vi.mocked(api.getJob).mockResolvedValue(
+      createJob({ status: "in_progress" }) as Job,
+    );
+
+    renderJobPage();
+
+    const declineButton = await screen.findByRole("button", {
+      name: /mark as declined/i,
+    });
+    fireEvent.click(declineButton);
+
+    const modal = await screen.findByTestId("log-event-modal");
+    expect(modal).toHaveAttribute("data-initial-stage", "rejected");
+  });
+
+  it("declines an applied job end-to-end without requiring In Progress first", async () => {
+    vi.mocked(api.getJob).mockResolvedValue(
+      createJob({ status: "applied" }) as Job,
+    );
+    vi.mocked(api.transitionJobStage).mockResolvedValue({
+      id: "event-1",
+      applicationId: "job-1",
+      title: "Rejected",
+      groupId: null,
+      fromStage: null,
+      toStage: "closed",
+      occurredAt: 1_706_000_000,
+      metadata: null,
+      outcome: "rejected",
+    });
+
+    renderJobPage();
+
+    const declineButton = await screen.findByRole("button", {
+      name: /mark as declined/i,
+    });
+    fireEvent.click(declineButton);
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /submit log event/i }),
+    );
+
+    await waitFor(() =>
+      expect(api.transitionJobStage).toHaveBeenCalledWith(
+        "job-1",
+        expect.objectContaining({ toStage: "closed", outcome: "rejected" }),
+      ),
+    );
+    expect(toast.success).toHaveBeenCalledWith("Event logged");
+  });
+
+  it("opens the log event modal with no preset stage from Log Event", async () => {
+    vi.mocked(api.getJob).mockResolvedValue(
+      createJob({ status: "in_progress" }) as Job,
+    );
+
+    renderJobPage();
+
+    const logButton = await screen.findByRole("button", {
+      name: /^log event$/i,
+    });
+    fireEvent.click(logButton);
+
+    const modal = await screen.findByTestId("log-event-modal");
+    expect(modal).toHaveAttribute("data-initial-stage", "");
+  });
+});
+
+describe("JobPage cover letter", () => {
+  it("generates a cover letter from a ready job with none yet", async () => {
+    vi.mocked(api.getJob).mockResolvedValue(
+      createJob({ status: "ready", coverLetterPdfPath: null }) as Job,
+    );
+    vi.mocked(api.generateCoverLetterPdf).mockResolvedValue(
+      createJob({ status: "ready", coverLetterPdfPath: "/tmp/cl.pdf" }) as Job,
+    );
+
+    renderJobPage();
+
+    const generateButton = await screen.findByRole("button", {
+      name: /generate cover letter/i,
+    });
+    fireEvent.click(generateButton);
+
+    await waitFor(() =>
+      expect(api.generateCoverLetterPdf).toHaveBeenCalledWith("job-1", {
+        forceRegenerate: false,
+      }),
+    );
+    expect(toast.success).toHaveBeenCalledWith("Cover letter generated");
+  });
+
+  it("opens and offers to regenerate an existing cover letter", async () => {
+    vi.mocked(api.getJob).mockResolvedValue(
+      createJob({
+        status: "ready",
+        coverLetterPdfPath: "/tmp/cl.pdf",
+      }) as Job,
+    );
+
+    renderJobPage();
+
+    const viewButton = await screen.findByRole("button", {
+      name: /view cover letter/i,
+    });
+    fireEvent.click(viewButton);
+    expect(privatePdf.openCoverLetterPdf).toHaveBeenCalledWith("job-1");
+
+    expect(
+      screen.getByRole("button", { name: /regenerate cover letter/i }),
+    ).toBeInTheDocument();
   });
 });

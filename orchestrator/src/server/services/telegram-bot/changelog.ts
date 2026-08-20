@@ -37,6 +37,27 @@ export interface ChangelogItem {
  */
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.21.0",
+    date: "2026-08-20",
+    items: [
+      {
+        title: "🚫 Mark applications as declined in one tap",
+        description:
+          "Mark a job as declined right from its page or the jobs list — no need to move it to In Progress first. Dragging a card to Closed on the In Progress board now asks what happened (declined, withdrawn, etc.) instead of silently losing that information.",
+      },
+      {
+        title: "🏷️ Declined jobs are visible at a glance",
+        description:
+          "Declined or withdrawn jobs now show a distinct label in the jobs list and detail panel instead of just \"In Progress\", so you can tell what happened without opening the job.",
+      },
+      {
+        title: "📊 Rejection Insights on the Overview page",
+        description:
+          "See how many times you applied vs. got declined, which interview stage you lose candidates at most, why (when known), and which applications have gone quiet for 3+ weeks — useful signals for improving your CV and follow-up habits.",
+      },
+    ],
+  },
+  {
     version: "1.20.0",
     date: "2026-07-20",
     items: [
